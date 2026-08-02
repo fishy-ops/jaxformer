@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaxformer"
+version = "0.1.0"
+description = "A from-scratch autoregressive LM in JAX with a hand-written CUDA attention kernel"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Pinned to the versions on the Kaggle TPU v5e-8 image so the notebook and the
+# local dev environment agree. Verified 2026-08-01.
+dependencies = [
+    "jax>=0.10",
+    "flax>=0.12",
+    "optax>=0.2.8",
+    "orbax-checkpoint>=0.11",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+# Corpus preparation. Only needed on the machine that builds the token shards.
+data = ["tokenizers>=0.23", "datasets>=5.0", "zstandard"]
+
+# The PyTorch mirror and CUDA kernel host. Installed on the Windows/RTX box only;
+# torch is intentionally unpinned here because the CUDA wheel index supplies it.
+torch = ["torch", "pytest"]
+
+dev = ["pytest>=8", "matplotlib>=3.8", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["jaxformer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Sharding tests need >1 device; tests/conftest.py fakes 8 CPU devices before jax
+# is imported (XLA reads that flag once, at backend init).
+markers = [
+    "cuda: requires an NVIDIA GPU and the compiled kernel extension",
+    "slow: excluded from the default run",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
