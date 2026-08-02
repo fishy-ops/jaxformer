@@ -178,6 +178,22 @@ comparable.)
 
 ---
 
+## Does it learn?
+
+A short run of the real 55M model on the real fineweb-edu shards — 250 steps, CPU,
+`python -m scripts.train_smoke` — to show the pipeline actually descends rather than
+just passing unit tests:
+
+![loss curve](docs/figures/train_smoke_loss.png)
+
+Train loss falls from **9.45 → 6.55** and val loss from **7.45 → 6.68**, cleanly away
+from the `ln(vocab) ≈ 10.4` uniform-init reference, with healthy gradient norms and the
+warmup→cosine schedule behaving. This is ~1M tokens; the 3.2–3.6 nat target needs the
+full 1.1B-token run (that's the Kaggle job), but the descent is real and monotonic — the
+data pipeline, tokenizer, loss, optimizer, and schedule all work end to end on real text.
+
+---
+
 ## Architecture, and the reasons
 
 | Choice | Reason |
@@ -229,10 +245,11 @@ python -m bench.bench_attention        # the table above
   say exactly why, with numbers, and name the v3 direction (warp-shuffle softmax + K/V
   reuse). The kernels are correct and profiler-optimized, not state-of-the-art — which is
   the honest state of a hand-written kernel against a vendor-tuned one.
-- **No long training run to convergence yet.** The cross-hardware throughput/latency
-  numbers are measured, and the TPU row is one notebook run away, but an actual loss curve
-  on the full corpus (upload to Kaggle, ~9 h session) is future work. The pipeline,
-  sharding, checkpointing, and parity that make such a run trustworthy are done and tested.
+- **No *full* training run to convergence yet.** A short run shows the loss descends
+  cleanly on real data (above), and the cross-hardware throughput/latency numbers are
+  measured, but training to the 3.2–3.6 nat target on the full 1.1B-token corpus (upload
+  to Kaggle, ~9 h session) is future work. The corpus is prepared; the pipeline, sharding,
+  checkpointing, and parity that make such a run trustworthy are done and tested.
 
 ---
 

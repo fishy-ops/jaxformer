@@ -140,6 +140,38 @@ def render_training():
     print(f"wrote {path}")
 
 
+def render_loss_curve():
+    """Train/val loss from the short real-data run: does the model actually learn?"""
+    path = os.path.join(HERE, "results", "train_smoke_loss.json")
+    if not os.path.exists(path):
+        return
+    d = json.load(open(path))
+    tr = d["train_log"]
+    fig, ax = plt.subplots(figsize=(7, 4.4))
+    ax.plot([l["step"] for l in tr], [l["loss"] for l in tr],
+            color="#1565c0", marker="o", markersize=3, linewidth=1.5, label="train loss")
+    if d.get("val_log"):
+        vl = d["val_log"]
+        ax.plot([v["step"] for v in vl], [v["val_loss"] for v in vl],
+                color="#2e7d32", marker="D", markersize=6, linewidth=2, label="val loss")
+    ln_vocab = d.get("init_loss_reference_ln_vocab")
+    if ln_vocab:
+        ax.axhline(ln_vocab, color="#9e9e9e", ls="--", lw=1,
+                   label=f"uniform init ≈ ln(vocab) = {ln_vocab:.1f}")
+    cfg = d.get("config", {})
+    ax.set_xlabel("step")
+    ax.set_ylabel("cross-entropy loss (nats)")
+    ax.set_title(f"{d.get('model','model')} on real fineweb-edu, {d.get('device','')} "
+                 f"({cfg.get('steps')} steps, batch {cfg.get('batch')}, seq {cfg.get('seq')})")
+    ax.grid(True, ls=":", alpha=0.4)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    out = os.path.join(FIG_DIR, "train_smoke_loss.png")
+    fig.savefig(out, dpi=140)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
 def main():
     paths = sorted(glob.glob(os.path.join(HERE, "results", "attention_*.json")))
     if not paths:
@@ -147,6 +179,7 @@ def main():
     for p in paths:
         render(p)
     render_training()
+    render_loss_curve()
 
 
 if __name__ == "__main__":

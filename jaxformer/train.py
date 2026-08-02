@@ -219,8 +219,13 @@ def train(
     peak_flops_per_device: float | None = None,
     compute_dtype=jnp.bfloat16,
     on_log=None,
+    on_eval=None,
 ):
-    """Run the training loop. ``train_batches`` yields ``(B, T+1)`` int32 arrays."""
+    """Run the training loop. ``train_batches`` yields ``(B, T+1)`` int32 arrays.
+
+    ``on_log(StepLog)`` fires at each train-loss log; ``on_eval(step, val_loss)`` fires
+    at each validation, so callers can collect both series without parsing stdout.
+    """
     mesh = mesh or shd.make_mesh()
     graphdef, state, tx = init_train_state(model_cfg, train_cfg, mesh, compute_dtype)
     step_fn = make_train_step(graphdef, tx, train_cfg.grad_accum_steps)
@@ -281,6 +286,8 @@ def train(
                 ])
             )
             print(f"step {step:>6}  val_loss {float(val):.4f}")
+            if on_eval:
+                on_eval(step, float(val))
             window_start, window_steps = time.perf_counter(), 0
 
         if ckptr and checkpoint_dir and step % train_cfg.checkpoint_every == 0:
