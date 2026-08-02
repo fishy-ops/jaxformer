@@ -1,0 +1,14 @@
+{
+  "backend": "torch_cuda",
+  "device": "NVIDIA GeForce RTX 2070 SUPER",
+  "n_devices": 1,
+  "dtype": "fp16",
+  "train_tokens_per_sec": 24650.019066944013,
+  "infer_ms_per_token": 23.561256250104634,
+  "peak_mb": 2122.366464,
+  "config": {
+    "batch": 8,
+    "seq": 256
+  },
+  "timestamp": "2026-08-02T16:24:33"
+}

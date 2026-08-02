@@ -98,12 +98,55 @@ def render(json_path):
                 os.path.join(FIG_DIR, f"attn_tflops{tag}.png"), logy=False)
 
 
+def render_training():
+    """Grouped bars: training throughput and inference latency per hardware target."""
+    paths = sorted(glob.glob(os.path.join(HERE, "results", "training_*.json")))
+    if not paths:
+        return
+    rows = [json.load(open(p)) for p in paths]
+    # Stable order: CPU, GPU, TPU as available.
+    order = {"jax_cpu": 0, "torch_cuda": 1, "jax_tpu": 2}
+    rows.sort(key=lambda r: order.get(r["backend"], 9))
+    labels = [f"{r['device'].split('(')[0].strip()}\n({r['backend']}, {r['dtype']})" for r in rows]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4))
+    x = range(len(rows))
+    colors = ["#1565c0", "#2e7d32", "#6a1b9a"][: len(rows)]
+
+    ax1.bar(x, [r["train_tokens_per_sec"] for r in rows], color=colors)
+    ax1.set_title("Training throughput")
+    ax1.set_ylabel("tokens / sec")
+    for i, r in enumerate(rows):
+        ax1.text(i, r["train_tokens_per_sec"], f"{r['train_tokens_per_sec']:,.0f}",
+                 ha="center", va="bottom", fontsize=9)
+
+    ax2.bar(x, [r["infer_ms_per_token"] for r in rows], color=colors)
+    ax2.set_title("Inference latency (single-token decode)")
+    ax2.set_ylabel("ms / token")
+    for i, r in enumerate(rows):
+        ax2.text(i, r["infer_ms_per_token"], f"{r['infer_ms_per_token']:.1f}",
+                 ha="center", va="bottom", fontsize=9)
+
+    for ax in (ax1, ax2):
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.grid(True, axis="y", ls=":", alpha=0.4)
+    cfg = rows[0].get("config", {})
+    fig.suptitle(f"Cross-hardware: same ~55M model  (batch={cfg.get('batch')}, seq={cfg.get('seq')})")
+    fig.tight_layout()
+    path = os.path.join(FIG_DIR, "training_hardware.png")
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+    print(f"wrote {path}")
+
+
 def main():
     paths = sorted(glob.glob(os.path.join(HERE, "results", "attention_*.json")))
     if not paths:
         raise SystemExit("no bench/results/attention_*.json found")
     for p in paths:
         render(p)
+    render_training()
 
 
 if __name__ == "__main__":

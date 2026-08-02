@@ -1,0 +1,14 @@
+{
+  "backend": "jax_cpu",
+  "device": "cpu",
+  "n_devices": 1,
+  "dtype": "fp32",
+  "train_tokens_per_sec": 2357.583299860067,
+  "infer_ms_per_token": 19.330040373461088,
+  "peak_mb": 4242.620416,
+  "config": {
+    "batch": 8,
+    "seq": 256
+  },
+  "timestamp": "2026-08-02T16:23:49"
+}
