@@ -90,6 +90,28 @@ def test_kv_cache_decode_matches_full_forward():
     assert torch.equal(full_ids, cached_ids)
 
 
+def test_fresh_model_has_sane_init_loss():
+    """A from-scratch torch model must start near ln(vocab), not PyTorch's default init.
+
+    Parity copies Flax weights in, so it can't catch a bad default init on a fresh
+    model; a from-scratch training run can (and did — kaiming init gave a ~200-nat
+    initial loss). This pins the GPT-style 0.02 init.
+    """
+    import math
+
+    cfg = tiny()
+    torch.manual_seed(0)
+    model = TorchTransformer(cfg).eval()
+    b = torch.randint(0, cfg.vocab_size, (4, 64))
+    with torch.no_grad():
+        logits, _ = model(b[:, :-1])
+        loss = torch.nn.functional.cross_entropy(
+            logits.reshape(-1, logits.size(-1)), b[:, 1:].reshape(-1)
+        )
+    # Uniform-ish predictions at init => loss ~ ln(vocab); allow generous slack.
+    assert abs(loss.item() - math.log(cfg.vocab_size)) < 1.0
+
+
 def test_causal_mask_holds():
     """Perturbing a future token must not change an earlier position's logits."""
     cfg = tiny()

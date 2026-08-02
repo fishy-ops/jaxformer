@@ -67,17 +67,24 @@ def main():
     ap.add_argument("--eval-every", type=int, default=1000)
     ap.add_argument("--eval-steps", type=int, default=20)
     ap.add_argument("--ckpt-every", type=int, default=2000)
+    ap.add_argument("--precision", choices=["fp16", "fp32"], default="fp16")
     args = ap.parse_args()
 
+    use_amp = args.precision == "fp16"
     assert torch.cuda.is_available()
     torch.backends.cuda.matmul.allow_tf32 = True
     os.makedirs(args.out, exist_ok=True)
     dev = "cuda"
 
     cfg, tcfg = DEFAULT_MODEL, TrainConfig()
-    model = Transformer(cfg).to(dev)  # fp32 master weights; autocast handles fp16 compute
+    model = Transformer(cfg).to(dev)  # fp32 master weights
     opt = make_optimizer(model, tcfg)
-    scaler = torch.amp.GradScaler("cuda")
+    # GradScaler is a no-op when disabled, so the fp32 path shares one code path.
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    import contextlib
+
+    def autocast():
+        return torch.amp.autocast("cuda", dtype=torch.float16) if use_amp else contextlib.nullcontext()
 
     train_ds = TokenDataset(args.data_dir, "train")
     val_ds = TokenDataset(args.data_dir, "val")
@@ -112,7 +119,7 @@ def main():
         losses = []
         for _ in range(args.eval_steps):
             b = to_dev(next(val_iter))
-            with torch.amp.autocast("cuda", dtype=torch.float16):
+            with autocast():
                 logits, _ = model(b[:, :-1])
                 loss = torch.nn.functional.cross_entropy(
                     logits.reshape(-1, logits.size(-1)), b[:, 1:].reshape(-1))
@@ -141,7 +148,7 @@ def main():
 
         b = to_dev(next(train_batches))
         opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast("cuda", dtype=torch.float16):
+        with autocast():
             logits, _ = model(b[:, :-1])
             loss = torch.nn.functional.cross_entropy(
                 logits.reshape(-1, logits.size(-1)), b[:, 1:].reshape(-1))
@@ -162,7 +169,7 @@ def main():
             print(f"step {step:>6}  loss {row['loss']:.4f}  gnorm {row['grad_norm']:.2f}  "
                   f"lr {row['lr']:.2e}  {tps/1e3:.1f}k tok/s", flush=True)
             json.dump({"model": "jaxformer ~55M", "device": torch.cuda.get_device_name(0),
-                       "dtype": "fp16", "config": {"steps": args.steps, "batch": args.batch, "seq": args.seq},
+                       "dtype": args.precision, "config": {"steps": args.steps, "batch": args.batch, "seq": args.seq},
                        "init_loss_reference_ln_vocab": math.log(cfg.vocab_size),
                        "train_log": train_log, "val_log": val_log},
                       open(log_path, "w"), indent=2)

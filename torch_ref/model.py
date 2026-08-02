@@ -190,6 +190,28 @@ class Transformer(nn.Module):
         self.final_norm = RMSNorm(cfg.d_model, cfg.rms_norm_eps)
         if not cfg.tie_embeddings:
             self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        self._init_weights()
+
+    def _init_weights(self):
+        """GPT-style init, matching the Flax model, for training from scratch.
+
+        Without this a fresh torch model uses PyTorch's default (kaiming) init, whose
+        much larger weights give a ~200-nat initial loss instead of ~ln(vocab). Parity
+        never caught it because the parity loader overwrites these with Flax's weights;
+        it only bites a from-scratch run.
+        """
+        cfg = self.cfg
+        std = 0.02
+        out_std = 0.02 / (2 * cfg.n_layers) ** 0.5  # GPT-2 depth scaling for residual outs
+        nn.init.normal_(self.embed.weight, mean=0.0, std=std)
+        if not cfg.tie_embeddings:
+            nn.init.normal_(self.lm_head.weight, mean=0.0, std=std)
+        for blk in self.blocks:
+            for lin in (blk.attn.q_proj, blk.attn.k_proj, blk.attn.v_proj,
+                        blk.mlp.gate_proj, blk.mlp.up_proj):
+                nn.init.normal_(lin.weight, mean=0.0, std=std)
+            for lin in (blk.attn.o_proj, blk.mlp.down_proj):  # feed the residual stream
+                nn.init.normal_(lin.weight, mean=0.0, std=out_std)
 
     def forward(
         self,
@@ -222,11 +244,17 @@ class Transformer(nn.Module):
                 new_cache.append(c)
 
         x = self.final_norm(x)
-        if cfg.tie_embeddings:
-            logits = F.linear(x, self.embed.weight)  # x @ embed.weight.T
-        else:
-            logits = self.lm_head(x)
-        return logits.float(), new_cache
+        # Compute logits in fp32 with autocast disabled. Under fp16 autocast the tied
+        # projection over a 32k vocab can overflow fp16's ~65504 max and blow up the
+        # loss; the Flax side likewise returns fp32 logits. In an fp32 forward this
+        # context is a no-op, so parity is unaffected.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            xf = x.float()
+            if cfg.tie_embeddings:
+                logits = F.linear(xf, self.embed.weight.float())
+            else:
+                logits = self.lm_head(xf.to(self.lm_head.weight.dtype)).float()
+        return logits, new_cache
 
     def init_cache(self, batch_size: int, max_len: int, dtype=torch.float32, device=None) -> list[KVCache]:
         cfg = self.cfg
