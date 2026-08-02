@@ -1,4 +1,4 @@
-# Handoff — 2026-08-01
+# Handoff — updated 2026-08-02
 
 Working notes for resuming JaxFormer. Delete this file once the README exists.
 
@@ -30,11 +30,12 @@ tokenizers 0.23.1, datasets 5.0.1.
 | 1 — JAX model + tests | done, 13 tests |
 | 1 — Sharding + training loop | done, 14 tests |
 | 1 — Tokenizer + data pipeline | done, 19 tests |
-| 1 — Sampler (`sample.py`) | written, **no tests yet** |
+| 1 — Sampler (`sample.py`) | done, 16 tests |
 | 2–7 | not started |
 
-Two commits on `main`. No GitHub remote yet — deliberate, the plan creates the
-repo once there's a working pipeline to show rather than an empty scaffold.
+**Phase 1 is complete.** 62 tests, ~19s. Five commits on `main`. No GitHub remote
+yet — deliberate, the plan creates the repo once there's a working pipeline to
+show rather than an empty scaffold. That condition is now met.
 
 ### What's actually verified
 
@@ -44,7 +45,9 @@ repo once there's a working pipeline to show rather than an empty scaffold.
 - 8-device training == 1-device training (atol 1e-5).
 - Checkpoints round-trip bit-exactly and leave no `.tmp` directory.
 - Corpus prep ran end to end against real fineweb-edu and decoded back to clean
-  English with disjoint train/val.
+  English with disjoint train/val. Token targets are respected: 402,166 against a
+  400,000 request, overshoot bounded by one document.
+- Generation matches an uncached full-forward reference token for token.
 
 ---
 
@@ -53,55 +56,62 @@ repo once there's a working pipeline to show rather than an empty scaffold.
 **This blocks Phases 3, 4, 5, and 6 — roughly half the project.** Nothing in
 Phase 1/2 depends on it, which is why it hasn't stopped progress yet.
 
-Tailscale is stopped on the Mac, so the RTX 2070 Super box was never reachable
-this session. Two things need to happen, in this order:
+**Network is solved.** Tailscale is up; the box is `akpc` (100.109.40.37) and
+SSH is listening on port 22 — `tailscale ping akpc` and `nc -z akpc 22` both
+succeed from the Mac.
 
-1. **Reach the box.** Start Tailscale on both machines, and enable the built-in
-   OpenSSH Server on Windows (Settings → Optional Features). Without SSH the
-   fallback is a git round-trip: commit here, `git pull` on Windows, run a
-   script, commit results back. Workable but slow to iterate on CUDA.
+**Auth is not.** `ssh akpc` returns `Permission denied (publickey,password,
+keyboard-interactive)`. A keypair now exists at `~/.ssh/id_ed25519` on the Mac;
+its public half still has to be installed on the Windows side. Note that Windows
+OpenSSH sends *admin* accounts to `%ProgramData%\ssh\administrators_authorized_keys`
+(not `~/.ssh/authorized_keys`), and that file needs its ACL restricted to
+`Administrators` and `SYSTEM` or sshd silently ignores it. Also unconfirmed: the
+Windows username — `rishishanigaram` was a guess and may be wrong.
 
-2. **Verify the toolchain.** In priority order — the first one is the real gate:
-   - `torch.utils.cpp_extension.load` compiling a hello-world `.cu`. If this
-     can't drive MSVC, everything downstream stalls. Fallback is CuPy
-     `RawModule` (NVRTC, no MSVC dependency), which costs the "real build
-     system" talking point but keeps the CUDA work alive.
-   - CUDA Toolkit 12.x + **Visual Studio 2022 Build Tools** (nvcc needs MSVC —
-     the Toolkit alone is not enough).
-   - `nvcc --version`, `nvidia-smi`.
-   - Nsight Compute installed with `ncu` on PATH.
-   - PyTorch CUDA wheel (`torch.cuda.is_available()`).
+Fallback if SSH stays broken: git round-trip — commit here, `git pull` on
+Windows, run the probe, commit results back. Workable but slow for CUDA iteration.
 
-These installs are large and slow. Worth kicking off before a work session
-rather than during one.
+Once auth works, the toolchain probes are written and ready to run:
+
+```bash
+ssh akpc "powershell -ExecutionPolicy Bypass -File scripts\probe_windows.ps1"
+ssh akpc "python scripts\probe_cuda_build.py"     # the real gate
+```
+
+`probe_windows.ps1` checks nvidia-smi / nvcc / ncu / MSVC-via-vswhere / torch.
+`probe_cuda_build.py` is the one that actually decides the CUDA half: all of
+those can be individually present while `cpp_extension` still fails to drive
+`cl.exe`. If it fails, retry from an *x64 Native Tools Command Prompt for VS
+2022*; if it still fails, `probe_cuda_build.py --cupy` assesses the NVRTC
+fallback, which costs the "registered torch custom op" talking point but keeps
+the kernel work alive.
+
+Missing installs (CUDA Toolkit 12.x, VS 2022 Build Tools, Nsight Compute) are
+large and slow — worth kicking off before a work session rather than during one.
 
 ---
 
 ## Next steps, in order
 
-1. **Add sampler tests.** `sample.py` is the only untested module. Wants: greedy
-   decoding is deterministic, `top_k` actually restricts the support, EOT stops
-   generation, and generated ids stay in vocab range.
+1. **Install the SSH key on `akpc`** (see the blocker section above), then run
+   the two probes. This unblocks half the project and everything needed to run it
+   is already committed.
 
-2. **Re-verify corpus prep against real data.** The per-document stop fix is
-   unit-tested but the confirming real-data run was interrupted. Command:
-   ```bash
-   python scripts/prepare_data.py --out-dir /tmp/smoke2 --vocab-size 4096 \
-     --target-tokens 400000 --val-tokens 100000 --shard-tokens 200000 \
-     --tokenizer-bytes 8000000
-   ```
-   Expect train ≈ 400k tokens (previously 1.54M). Takes a few minutes, mostly
-   HuggingFace stream startup.
+2. **Real corpus prep.** `python scripts/prepare_data.py --out-dir data`.
+   Multi-hour, ~2.2 GB output. Run it in the background — it now exits cleanly,
+   so a completion notification actually arrives. Then upload `data/` to Kaggle
+   as a private Dataset.
 
-3. **Real corpus prep.** `python scripts/prepare_data.py --out-dir data`.
-   Multi-hour, ~2.2 GB output. Run it in the background. Then upload `data/` to
-   Kaggle as a private Dataset.
-
-4. **Phase 2 — Kaggle notebook.** `notebooks/kaggle_tpu_train.ipynb` as a thin
+3. **Phase 2 — Kaggle notebook.** `notebooks/kaggle_tpu_train.ipynb` as a thin
    driver over the pip-installed package. Confirm `jax.devices()` reports 8 TPU
    chips and note the image's JAX/Flax versions before the real run.
 
+4. **Create the GitHub remote.** Phase 1 is done, which was the gate.
+
 5. **Phase 3+ — gated on the Windows box.**
+
+Steps 1 and 2 are independent — the corpus prep can stream in the background
+while the Windows toolchain is being sorted out.
 
 ---
 
@@ -126,6 +136,12 @@ Things that will look arbitrary later without the reasoning:
 - **Own 32k BPE, not GPT-2's.** At d_model=512 a 50k vocab puts ~25M params —
   45% of the model — in the embedding table. 32k also fits uint16, halving the
   corpus on disk to ~2.2 GB, which is what makes the Kaggle upload practical.
+
+- **`os._exit(0)` at the end of `prepare_data.py`.** Not laziness. Abandoning a
+  HuggingFace streaming iterator mid-document — which the target-token stop does,
+  twice — wedges the interpreter at shutdown: 0% CPU, manifests already written,
+  never exits. All durable output is on disk by that point. Without this the
+  multi-hour background run never reports completion.
 
 - **The 1e-5 tolerance in `test_sharded_step_matches_single_device`.** Not
   sloppiness: float32 all-reduce ordering genuinely differs by device count.
@@ -157,7 +173,6 @@ re-derive them:
 
 ## Loose ends
 
-- `jaxformer/sample.py` has no tests.
 - No README yet (Phase 7).
 - No GitHub remote. Account is `fishy-ops`; plan defaults to a public repo named
   `jaxformer`, created at the end of Phase 1.
