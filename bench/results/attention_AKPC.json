@@ -1,0 +1,163 @@
+{
+  "device": "NVIDIA GeForce RTX 2070 SUPER",
+  "compute_capability": "sm_75",
+  "torch": "2.8.0+cu128",
+  "cuda": "12.8",
+  "config": {
+    "B": 4,
+    "H": 8,
+    "head_dim": 64,
+    "causal": true
+  },
+  "rows": [
+    {
+      "seq_len": 512,
+      "impl": "naive",
+      "latency_ms": 1.1404320001602173,
+      "peak_mb": 101.056512,
+      "max_abs_err": 7.152557373046875e-07,
+      "tflops": 0.9415220055638142
+    },
+    {
+      "seq_len": 512,
+      "impl": "sdpa_math",
+      "latency_ms": 1.2632160186767578,
+      "peak_mb": 110.248448,
+      "max_abs_err": 7.450580596923828e-07,
+      "tflops": 0.8500064977997702
+    },
+    {
+      "seq_len": 512,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 0.3389279991388321,
+      "peak_mb": 33.685504,
+      "max_abs_err": null,
+      "tflops": 3.1680528806360804
+    },
+    {
+      "seq_len": 512,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 512,
+      "impl": "ours_v1",
+      "latency_ms": 0.7126399874687195,
+      "peak_mb": 33.685504,
+      "max_abs_err": 4.76837158203125e-07,
+      "tflops": 1.5067100399654894
+    },
+    {
+      "seq_len": 1024,
+      "impl": "naive",
+      "latency_ms": 4.241391897201538,
+      "peak_mb": 328.33536,
+      "max_abs_err": 9.5367431640625e-07,
+      "tflops": 1.0126315606048597
+    },
+    {
+      "seq_len": 1024,
+      "impl": "sdpa_math",
+      "latency_ms": 4.445823907852173,
+      "peak_mb": 365.0688,
+      "max_abs_err": 1.1324882507324219e-06,
+      "tflops": 0.9660677941864204
+    },
+    {
+      "seq_len": 1024,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 1.0322399735450745,
+      "peak_mb": 58.851328,
+      "max_abs_err": null,
+      "tflops": 4.160822489027987
+    },
+    {
+      "seq_len": 1024,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 1024,
+      "impl": "ours_v1",
+      "latency_ms": 2.2477920055389404,
+      "peak_mb": 58.851328,
+      "max_abs_err": 4.76837158203125e-07,
+      "tflops": 1.9107494311824549
+    },
+    {
+      "seq_len": 2048,
+      "impl": "naive",
+      "latency_ms": 15.987088203430176,
+      "peak_mb": 1187.119104,
+      "max_abs_err": 8.642673492431641e-07,
+      "tflops": 1.0746090198159977
+    },
+    {
+      "seq_len": 2048,
+      "impl": "sdpa_math",
+      "latency_ms": 16.393903732299805,
+      "peak_mb": 1333.985792,
+      "max_abs_err": 8.642673492431641e-07,
+      "tflops": 1.0479425440416403
+    },
+    {
+      "seq_len": 2048,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 3.6856800317764282,
+      "peak_mb": 109.182976,
+      "max_abs_err": null,
+      "tflops": 4.661248137625128
+    },
+    {
+      "seq_len": 2048,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 2048,
+      "impl": "ours_v1",
+      "latency_ms": 7.7633278369903564,
+      "peak_mb": 109.182976,
+      "max_abs_err": 4.76837158203125e-07,
+      "tflops": 2.212951654848599
+    },
+    {
+      "seq_len": 4096,
+      "impl": "naive",
+      "latency_ms": 63.09912109375,
+      "peak_mb": 4521.590784,
+      "max_abs_err": 1.5497207641601562e-06,
+      "tflops": 1.0890718530595618
+    },
+    {
+      "seq_len": 4096,
+      "impl": "sdpa_math",
+      "latency_ms": 64.48436737060547,
+      "peak_mb": 5108.924928,
+      "max_abs_err": 1.5497207641601562e-06,
+      "tflops": 1.065676528096406
+    },
+    {
+      "seq_len": 4096,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 14.137872219085693,
+      "peak_mb": 209.846272,
+      "max_abs_err": null,
+      "tflops": 4.8606661363957455
+    },
+    {
+      "seq_len": 4096,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 4096,
+      "impl": "ours_v1",
+      "latency_ms": 29.204447746276855,
+      "peak_mb": 209.846272,
+      "max_abs_err": 5.513429641723633e-07,
+      "tflops": 2.353048321030509
+    }
+  ],
+  "timestamp": "2026-08-02T14:32:27"
+}
