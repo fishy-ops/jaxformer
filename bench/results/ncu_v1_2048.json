@@ -1,0 +1,31 @@
+{
+  "device": "NVIDIA GeForce RTX 2070 SUPER",
+  "compute_capability": "sm_75",
+  "kernel": "fused_attn_fwd_kernel<64, 64, 64>",
+  "profiler": "Nsight Compute 2025.4.1 (ncu)",
+  "config": {"B": 4, "H": 8, "T": 2048, "head_dim": 64, "causal": true},
+  "launch": {"block": [64, 1, 1], "grid": [32, 32, 1]},
+  "metrics": {
+    "achieved_occupancy_pct": 12.25,
+    "sm_throughput_pct": 35.31,
+    "dram_throughput_pct": 1.51,
+    "registers_per_thread": 164,
+    "shared_mem_per_block_bytes": 32768,
+    "waves_per_sm": 12.80,
+    "shared_bank_conflicts_ld": 35686,
+    "shared_bank_conflicts_st": 355725,
+    "stall_long_scoreboard_per_issue": 0.43,
+    "stall_barrier_per_issue": 0.18,
+    "stall_mio_throttle_per_issue": 0.00
+  },
+  "interpretation": {
+    "bottleneck": "occupancy, register-limited",
+    "notes": [
+      "Achieved occupancy is only 12.25%. The cause is 164 registers/thread: each thread holds its query vector (64 floats) and output accumulator (64 floats) in registers, so few warps fit per SM and there is little latency hiding.",
+      "DRAM throughput is 1.51% -- the kernel is nowhere near memory-bound. Combined with the 0.43 long-scoreboard stall, the time goes to exposed load latency that the low occupancy cannot hide, not to bandwidth.",
+      "Shared-memory STORE bank conflicts (355,725) are ~10x the load conflicts (35,686): the cooperative K/V staging writes a conflicting layout. A padded shared layout removes them and is the concrete, Nsight-driven fix to try first.",
+      "SM (compute) throughput 35% with barrier stalls 0.18 points at the two-__syncthreads-per-tile structure plus the serial per-key online-softmax loop."
+    ],
+    "v2_direction": "fp16 WMMA tensor cores restructure the QK^T and AV products into warp-level matrix ops, collapsing the per-thread register arrays (raising occupancy) and halving shared memory (fp16), while a padded shared layout removes the store bank conflicts."
+  }
+}
