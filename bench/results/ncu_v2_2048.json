@@ -1,0 +1,40 @@
+{
+  "device": "NVIDIA GeForce RTX 2070 SUPER",
+  "compute_capability": "sm_75",
+  "kernel": "fused_attn_v2_kernel (fp16 WMMA tensor cores)",
+  "profiler": "Nsight Compute 2025.4.1 (ncu)",
+  "config": {"B": 4, "H": 8, "T": 2048, "head_dim": 64, "causal": true},
+  "launch": {"block": [32, 1, 1], "grid": [128, 32, 1]},
+  "note": "Before/after a single change: padding the shared output-accumulator row stride from 64 to 65 to break a 16-way bank conflict. Same kernel otherwise.",
+  "before_padding": {
+    "kernel_time_ns": 45311872,
+    "achieved_occupancy_pct": 27.38,
+    "registers_per_thread": 64,
+    "shared_mem_per_block_bytes": 6784,
+    "sm_throughput_pct": 8.15,
+    "tensor_hmma_util_pct": 0.59,
+    "dram_throughput_pct": 0.22,
+    "shared_bank_conflicts_ld": 655910162,
+    "shared_bank_conflicts_st": 552364472,
+    "stall_short_scoreboard_per_issue": 39.49,
+    "stall_long_scoreboard_per_issue": 3.84
+  },
+  "after_padding": {
+    "kernel_time_ns": 13280128,
+    "achieved_occupancy_pct": 27.29,
+    "registers_per_thread": 64,
+    "shared_mem_per_block_bytes": 6784,
+    "sm_throughput_pct": 27.85,
+    "tensor_hmma_util_pct": 2.05,
+    "dram_throughput_pct": 0.70,
+    "shared_bank_conflicts_ld": 147766088,
+    "shared_bank_conflicts_st": 46420662,
+    "stall_short_scoreboard_per_issue": 12.51,
+    "stall_long_scoreboard_per_issue": 2.43
+  },
+  "interpretation": {
+    "delta": "One padding line cut shared store-conflicts 12x (552M -> 46M) and load-conflicts 4.4x, raising SM throughput 3.4x and cutting kernel time 3.4x (45.3 -> 13.3 ms). Correctness unchanged (max abs err ~1e-3 vs a float64 reference).",
+    "vs_v1": "Relative to the fp32 SIMT v1, the WMMA rewrite already collapsed registers/thread 164 -> 64 and doubled occupancy 12% -> 27% by moving the accumulators into fragments.",
+    "remaining_bottleneck": "Even after the fix, tensor-core (HMMA) utilization is only 2% and short-scoreboard (shared/MIO) stalls still dominate at 12.5/issue. The matmuls are a small slice of the runtime; the serial per-row online-softmax glue -- 16 of 32 lanes, scalar shared-memory reductions between the two matmuls -- is what remains. Tensor cores accelerate the matmuls, but attention is not only matmuls; beating a tuned SIMT kernel needs warp-shuffle softmax reductions and K/V reuse across the key loop, the direction a v3 would take. An honest result: v2 is 3.4x faster than the naive WMMA version but does not yet beat v1 or the production mem-efficient kernel."
+  }
+}

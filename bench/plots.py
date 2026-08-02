@@ -26,8 +26,9 @@ STYLE = {
     "sdpa_mem_eff": ("SDPA mem-efficient",  "#2e7d32", "D", "-"),
     "sdpa_flash":   ("SDPA flash",          "#ef6c00", "x", ":"),
     "ours_v1":      ("Ours v1 (fp32)",      "#1565c0", "^", "-"),
+    "ours_v2":      ("Ours v2 (fp16 WMMA)", "#6a1b9a", "P", "-"),
 }
-ORDER = ["naive", "sdpa_math", "sdpa_mem_eff", "sdpa_flash", "ours_v1"]
+ORDER = ["naive", "sdpa_math", "sdpa_mem_eff", "sdpa_flash", "ours_v1", "ours_v2"]
 
 
 def _series(rows, impl, key):
@@ -79,20 +80,22 @@ def render(json_path):
     rows = data["rows"]
     dev = data["device"]
     cc = data.get("compute_capability", "")
+    dtype = data.get("dtype", "fp32")
     cfg = data["config"]
-    suffix = "causal" if cfg.get("causal", True) else "noncausal"
-    subtitle = f"{dev} ({cc}), B={cfg['B']} H={cfg['H']} Dh={cfg['head_dim']}, {suffix}"
+    causal = "causal" if cfg.get("causal", True) else "noncausal"
+    subtitle = f"{dev} ({cc}), {dtype}, B={cfg['B']} H={cfg['H']} Dh={cfg['head_dim']}, {causal}"
+    tag = f"_{dtype}"  # keep fp32 and fp16 figures distinct
 
     os.makedirs(FIG_DIR, exist_ok=True)
     _line_chart(rows, "latency_ms", "latency (ms, log)",
                 f"Attention latency\n{subtitle}",
-                os.path.join(FIG_DIR, "attn_latency.png"))
+                os.path.join(FIG_DIR, f"attn_latency{tag}.png"))
     _line_chart(rows, "peak_mb", "peak memory (MB, log)",
                 f"Attention peak memory -- O(T) vs O(T^2)\n{subtitle}",
-                os.path.join(FIG_DIR, "attn_memory.png"))
+                os.path.join(FIG_DIR, f"attn_memory{tag}.png"))
     _line_chart(rows, "tflops", "achieved TFLOP/s",
                 f"Attention throughput\n{subtitle}",
-                os.path.join(FIG_DIR, "attn_tflops.png"), logy=False)
+                os.path.join(FIG_DIR, f"attn_tflops{tag}.png"), logy=False)
 
 
 def main():

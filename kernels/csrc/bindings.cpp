@@ -4,10 +4,15 @@
 #include <torch/extension.h>
 
 torch::Tensor fused_attn_forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V, bool causal);
+torch::Tensor fused_attn_v2_forward(torch::Tensor Q, torch::Tensor K, torch::Tensor V, bool causal);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("forward", &fused_attn_forward,
           "Fused causal multi-head attention forward (v1, fp32)",
+          pybind11::arg("Q"), pybind11::arg("K"), pybind11::arg("V"),
+          pybind11::arg("causal") = true);
+    m.def("forward_v2", &fused_attn_v2_forward,
+          "Fused causal multi-head attention forward (v2, fp16 WMMA tensor cores)",
           pybind11::arg("Q"), pybind11::arg("K"), pybind11::arg("V"),
           pybind11::arg("causal") = true);
 }

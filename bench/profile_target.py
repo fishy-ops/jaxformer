@@ -19,12 +19,12 @@ import os
 
 import torch
 
-from kernels.build import load_v1
+from kernels.build import load
 
 
 def main() -> None:
     assert torch.cuda.is_available(), "profiling target requires CUDA"
-    kernel = load_v1(verbose=False)
+    kernel = load(verbose=False)
 
     B = int(os.environ.get("PROFILE_B", 4))
     H = int(os.environ.get("PROFILE_H", 8))
@@ -32,16 +32,19 @@ def main() -> None:
     Dh = int(os.environ.get("PROFILE_DH", 64))
     causal = os.environ.get("PROFILE_CAUSAL", "1") == "1"
     warmup = int(os.environ.get("PROFILE_WARMUP", 12))
+    which = os.environ.get("PROFILE_KERNEL", "v1")  # "v1" (fp32) or "v2" (fp16 WMMA)
 
+    dtype = torch.float16 if which == "v2" else torch.float32
     torch.manual_seed(0)
-    q = torch.randn(B, H, T, Dh, device="cuda")
-    k = torch.randn(B, H, T, Dh, device="cuda")
-    v = torch.randn(B, H, T, Dh, device="cuda")
+    q = torch.randn(B, H, T, Dh, device="cuda", dtype=dtype)
+    k = torch.randn(B, H, T, Dh, device="cuda", dtype=dtype)
+    v = torch.randn(B, H, T, Dh, device="cuda", dtype=dtype)
+    fn = kernel.forward_v2 if which == "v2" else kernel.forward
 
     # Warmups (skipped by the profiler) then measured launches. ncu selects which one
     # to capture via --launch-skip/--launch-count; extra launches are harmless.
     for _ in range(warmup + 3):
-        _ = kernel.forward(q, k, v, causal)
+        _ = fn(q, k, v, causal)
     torch.cuda.synchronize()
 
 

@@ -54,6 +54,20 @@ def _max_err(B, H, T, causal, kernel, seed=0):
     return (out - ref).abs().max().item()
 
 
+def _max_err_v2(B, H, T, causal, kernel, seed=0):
+    """v2 takes fp16 inputs; the reference uses the *same* rounded values (upcast to
+    double) so the residual measured is the kernel's fp16/tensor-core error, not the
+    rounding of the inputs."""
+    torch.manual_seed(seed)
+    q = torch.randn(B, H, T, 64, device="cuda", dtype=torch.float16)
+    k = torch.randn(B, H, T, 64, device="cuda", dtype=torch.float16)
+    v = torch.randn(B, H, T, 64, device="cuda", dtype=torch.float16)
+
+    out = kernel.forward_v2(q, k, v, causal)  # returns fp32
+    ref = reference_attention(q.double(), k.double(), v.double(), causal).float()
+    return (out - ref).abs().max().item()
+
+
 # Sequence lengths deliberately include non-multiples of the 64-wide tile (1, 7, 65,
 # 100, 200) to catch ragged-tail bugs, plus exact multiples (64, 128, 256).
 @pytest.mark.parametrize("T", [1, 7, 64, 65, 100, 128, 200, 256])
@@ -78,11 +92,42 @@ def test_first_query_attends_only_to_itself(kernel):
     assert torch.allclose(out[:, :, 0], v[:, :, 0], atol=1e-4)
 
 
+# --- v2: fp16 WMMA tensor cores -------------------------------------------------
+# Looser tolerance than v1: inputs and the P matrix are fp16, matmuls run on tensor
+# cores (fp16 multiply, fp32 accumulate). ~1e-2 is the honest fp16 band.
+
+
+@pytest.mark.parametrize("T", [1, 7, 16, 17, 64, 65, 100, 128, 200, 256])
+@pytest.mark.parametrize("causal", [True, False])
+def test_v2_matches_reference(T, causal, kernel):
+    err = _max_err_v2(2, 3, T, causal, kernel)
+    assert err < 2e-2, f"v2 T={T} causal={causal}: max abs err {err:.2e}"
+
+
+def test_v2_single_batch_single_head(kernel):
+    assert _max_err_v2(1, 1, 129, True, kernel) < 2e-2
+
+
+def test_v2_first_query_attends_only_to_itself(kernel):
+    torch.manual_seed(1)
+    q = torch.randn(1, 2, 32, 64, device="cuda", dtype=torch.float16)
+    k = torch.randn(1, 2, 32, 64, device="cuda", dtype=torch.float16)
+    v = torch.randn(1, 2, 32, 64, device="cuda", dtype=torch.float16)
+    out = kernel.forward_v2(q, k, v, True)
+    assert torch.allclose(out[:, :, 0], v[:, :, 0].float(), atol=2e-3)
+
+
 if __name__ == "__main__":
     k = load_v1(verbose=True)
-    print("built. running a sweep...")
+    print("built. v1 (fp32) sweep:")
     for causal in (True, False):
         for T in (1, 7, 64, 65, 100, 128, 200, 256, 512, 1024):
             e = _max_err(2, 3, T, causal, k)
             flag = "ok" if e < 2e-3 else "FAIL"
+            print(f"  [{flag}] T={T:5d} causal={causal!s:5}  max_abs_err={e:.2e}")
+    print("v2 (fp16 WMMA) sweep:")
+    for causal in (True, False):
+        for T in (1, 7, 16, 17, 64, 65, 100, 128, 200, 256, 512, 1024):
+            e = _max_err_v2(2, 3, T, causal, k)
+            flag = "ok" if e < 2e-2 else "FAIL"
             print(f"  [{flag}] T={T:5d} causal={causal!s:5}  max_abs_err={e:.2e}")

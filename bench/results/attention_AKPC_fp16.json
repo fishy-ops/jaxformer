@@ -1,0 +1,132 @@
+{
+  "device": "NVIDIA GeForce RTX 2070 SUPER",
+  "compute_capability": "sm_75",
+  "torch": "2.8.0+cu128",
+  "cuda": "12.8",
+  "dtype": "fp16",
+  "config": {
+    "B": 4,
+    "H": 8,
+    "head_dim": 64,
+    "causal": true
+  },
+  "rows": [
+    {
+      "seq_len": 512,
+      "impl": "sdpa_math",
+      "latency_ms": 1.4551039934158325,
+      "peak_mb": 112.3456,
+      "max_abs_err": 0.0009765625,
+      "tflops": 0.7379141483073034
+    },
+    {
+      "seq_len": 512,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 0.15199999511241913,
+      "peak_mb": 21.102592,
+      "max_abs_err": null,
+      "tflops": 7.064091174515243
+    },
+    {
+      "seq_len": 512,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 512,
+      "impl": "ours_v2",
+      "latency_ms": 0.780672013759613,
+      "peak_mb": 25.296896,
+      "max_abs_err": 0.0009415149688720703,
+      "tflops": 1.3754070916786187
+    },
+    {
+      "seq_len": 1024,
+      "impl": "sdpa_math",
+      "latency_ms": 5.0483198165893555,
+      "peak_mb": 369.263104,
+      "max_abs_err": 0.001953125,
+      "tflops": 0.8507716333434833
+    },
+    {
+      "seq_len": 1024,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 0.2868639975786209,
+      "peak_mb": 33.685504,
+      "max_abs_err": null,
+      "tflops": 14.972137780457711
+    },
+    {
+      "seq_len": 1024,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 1024,
+      "impl": "ours_v2",
+      "latency_ms": 2.769040107727051,
+      "peak_mb": 42.074112,
+      "max_abs_err": 0.0009627342224121094,
+      "tflops": 1.5510672034019388
+    },
+    {
+      "seq_len": 2048,
+      "impl": "sdpa_math",
+      "latency_ms": 18.7094087600708,
+      "peak_mb": 1342.3744,
+      "max_abs_err": 0.0009765625,
+      "tflops": 0.9182475728824147
+    },
+    {
+      "seq_len": 2048,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 0.8949600160121918,
+      "peak_mb": 58.851328,
+      "max_abs_err": null,
+      "tflops": 19.196242152304112
+    },
+    {
+      "seq_len": 2048,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 2048,
+      "impl": "ours_v2",
+      "latency_ms": 10.553200244903564,
+      "peak_mb": 75.628544,
+      "max_abs_err": 0.0009658336639404297,
+      "tflops": 1.6279298018908186
+    },
+    {
+      "seq_len": 4096,
+      "impl": "sdpa_math",
+      "latency_ms": 72.70084762573242,
+      "peak_mb": 5125.702144,
+      "max_abs_err": 0.001953125,
+      "tflops": 0.9452362521242019
+    },
+    {
+      "seq_len": 4096,
+      "impl": "sdpa_mem_eff",
+      "latency_ms": 3.2441279888153076,
+      "peak_mb": 109.182976,
+      "max_abs_err": null,
+      "tflops": 21.182726752126392
+    },
+    {
+      "seq_len": 4096,
+      "impl": "sdpa_flash",
+      "error": "RuntimeError: No available kernel. Aborting execution."
+    },
+    {
+      "seq_len": 4096,
+      "impl": "ours_v2",
+      "latency_ms": 41.10475158691406,
+      "peak_mb": 142.737408,
+      "max_abs_err": 0.0009729862213134766,
+      "tflops": 1.6718134542352336
+    }
+  ],
+  "timestamp": "2026-08-02T16:13:28"
+}

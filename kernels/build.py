@@ -18,19 +18,27 @@ _CSRC = os.path.join(os.path.dirname(__file__), "csrc")
 
 
 @functools.lru_cache(maxsize=None)
-def load_v1(verbose: bool = False):
-    """Compile (once per process) and return the v1 fp32 kernel module."""
-    from torch.utils.cpp_extension import load
+def load(verbose: bool = False):
+    """Compile (once per process) and return the attention-kernel module.
 
-    return load(
-        name="jf_fused_attn_v1",
+    Exposes ``.forward`` (v1, fp32 SIMT) and ``.forward_v2`` (fp16 WMMA tensor cores).
+    """
+    from torch.utils.cpp_extension import load as _load
+
+    return _load(
+        name="jf_fused_attn",
         sources=[
             os.path.join(_CSRC, "bindings.cpp"),
             os.path.join(_CSRC, "fused_attn_v1.cu"),
+            os.path.join(_CSRC, "fused_attn_v2.cu"),
         ],
         extra_cflags=["-O3"],
-        # Turing is sm_75. Line info makes Nsight Compute source-correlate the kernel
-        # in Phase 6 without the overhead of full device debug (-G).
+        # Turing is sm_75. Line info lets Nsight Compute source-correlate the kernel
+        # without the overhead of full device debug (-G).
         extra_cuda_cflags=["-O3", "-lineinfo", "-gencode=arch=compute_75,code=sm_75"],
         verbose=verbose,
     )
+
+
+# Back-compat alias: earlier code and tests import load_v1.
+load_v1 = load

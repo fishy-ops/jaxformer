@@ -64,16 +64,25 @@ def _sdpa(backend):
     return run
 
 
-def make_impls(kernel):
+def make_impls(kernel, dtype):
+    """Impl set for a given input dtype.
+
+    fp32 exercises the SIMT v1 kernel; fp16 exercises the tensor-core v2 kernel, so the
+    v2 comparison is against fp16 SDPA backends rather than fp32 ones. ours_v1 is
+    fp32-only and ours_v2 fp16-only, so each appears in exactly one set.
+    """
     from torch.nn.attention import SDPBackend
 
-    return {
-        "naive": naive_attention,
+    impls = {
         "sdpa_math": _sdpa(SDPBackend.MATH),
         "sdpa_mem_eff": _sdpa(SDPBackend.EFFICIENT_ATTENTION),
         "sdpa_flash": _sdpa(SDPBackend.FLASH_ATTENTION),
-        "ours_v1": lambda q, k, v, causal: kernel.forward(q, k, v, causal),
     }
+    if dtype == torch.float32:
+        return {"naive": naive_attention, **impls,
+                "ours_v1": lambda q, k, v, causal: kernel.forward(q, k, v, causal)}
+    return {**impls,
+            "ours_v2": lambda q, k, v, causal: kernel.forward_v2(q, k, v, causal)}
 
 
 # ---------------------------------------------------------------------------
@@ -110,35 +119,40 @@ def measure(fn, q, k, v, causal, reference):
     except Exception as e:  # backend unsupported on this GPU, OOM, etc.
         return {"error": f"{type(e).__name__}: {str(e).splitlines()[0][:120]}"}
 
-    err = None if reference is None else (out - reference).abs().max().item()
+    err = None if reference is None else (out.float() - reference.float()).abs().max().item()
     torch.cuda.reset_peak_memory_stats()
     lat = time_ms(lambda: fn(q, k, v, causal))
     peak_mb = torch.cuda.max_memory_allocated() / 1e6
     return {"latency_ms": lat, "peak_mb": peak_mb, "max_abs_err": err}
 
 
-def run(seq_lens, B, H, Dh, causal, seed=0):
-    kernel = load_v1(verbose=False)
-    impls = make_impls(kernel)
+def run(seq_lens, B, H, Dh, causal, dtype=torch.float32, seed=0):
+    from kernels.build import load
+
+    kernel = load(verbose=False)
+    impls = make_impls(kernel, dtype)
 
     dev = torch.cuda.get_device_name(0)
     cc = torch.cuda.get_device_capability(0)
+    dtype_name = {torch.float32: "fp32", torch.float16: "fp16"}[dtype]
     results = {
         "device": dev,
         "compute_capability": f"sm_{cc[0]}{cc[1]}",
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
+        "dtype": dtype_name,
         "config": {"B": B, "H": H, "head_dim": Dh, "causal": causal},
         "rows": [],
     }
-    print(f"{dev} ({results['compute_capability']}), torch {torch.__version__}, causal={causal}")
+    print(f"{dev} ({results['compute_capability']}), torch {torch.__version__}, "
+          f"{dtype_name}, causal={causal}")
     print(f"shape per length: B={B} H={H} Dh={Dh}\n")
 
     for T in seq_lens:
         torch.manual_seed(seed)
-        q = torch.randn(B, H, T, Dh, device="cuda")
-        k = torch.randn(B, H, T, Dh, device="cuda")
-        v = torch.randn(B, H, T, Dh, device="cuda")
+        q = torch.randn(B, H, T, Dh, device="cuda", dtype=dtype)
+        k = torch.randn(B, H, T, Dh, device="cuda", dtype=dtype)
+        v = torch.randn(B, H, T, Dh, device="cuda", dtype=dtype)
         flops = attn_flops(B, H, T, Dh, causal)
 
         # Reference for correctness: the mem-efficient backend (accurate, Turing-OK).
@@ -177,15 +191,19 @@ def main():
     ap.add_argument("--heads", type=int, default=8)
     ap.add_argument("--head-dim", type=int, default=64)
     ap.add_argument("--non-causal", action="store_true")
+    ap.add_argument("--dtype", choices=["fp32", "fp16"], default="fp32")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    results = run(args.seq, args.batch, args.heads, args.head_dim, causal=not args.non_causal)
+    dtype = {"fp32": torch.float32, "fp16": torch.float16}[args.dtype]
+    results = run(args.seq, args.batch, args.heads, args.head_dim,
+                  causal=not args.non_causal, dtype=dtype)
     results["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     host = platform.node().split(".")[0]
+    suffix = "" if args.dtype == "fp32" else f"_{args.dtype}"
     out = args.out or os.path.join(
-        os.path.dirname(__file__), "results", f"attention_{host}.json"
+        os.path.dirname(__file__), "results", f"attention_{host}{suffix}.json"
     )
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as f:
