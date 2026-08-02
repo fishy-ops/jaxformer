@@ -56,13 +56,8 @@ register-limited (164 regs/thread from the per-thread q + accumulator arrays); D
 smem) + a padded shared layout (kill the store conflicts). The nearest cheap
 "show-the-delta" win is the padded layout alone.
 
-**68 tests on the Mac** (incl. parity), **18 kernel tests on the box**. The custom
-kernel is ~2x faster than naive/sdpa-math, matches the mem-efficient backend's O(T)
-memory, and is ~2.1x slower than that production kernel — the gap v2 (tensor cores,
-vectorized loads) would close. SDPA's flash backend fails on Turing (headline).
-
-No GitHub remote yet — still deliberate, but the pipeline is well past "worth
-showing" now, so creating it is a near-term step.
+**68 tests on the Mac** (incl. parity), **40 kernel tests on the box** (v1 + v2).
+Full results and the benchmark/profiling story live in the README now.
 
 ### What's actually verified
 
@@ -103,27 +98,19 @@ The short version:
 
 ---
 
-## Next steps, in order
+## Next steps (only the runs remain)
 
-1. **Install the SSH key on `akpc`** (see the blocker section above), then run
-   the two probes. This unblocks half the project and everything needed to run it
-   is already committed.
+1. **TPU row of the cross-hardware table.** Open `notebooks/kaggle_tpu_train.ipynb`
+   on a Kaggle TPU v5e-8, run it, download `training_jax_tpu_kaggle.json` into
+   `bench/results/`, and `python -m bench.plots` to refresh the chart.
 
-2. **Real corpus prep.** `python scripts/prepare_data.py --out-dir data`.
-   Multi-hour, ~2.2 GB output. Run it in the background — it now exits cleanly,
-   so a completion notification actually arrives. Then upload `data/` to Kaggle
-   as a private Dataset.
+2. **Training to convergence (optional headline).** `python scripts/prepare_data.py
+   --out-dir data` (multi-hour, ~2.2 GB, exits cleanly), upload `data/` as a private
+   Kaggle Dataset, then use the notebook's optional training section. Sanity target:
+   val loss ≈ 3.2–3.6 nats.
 
-3. **Phase 2 — Kaggle notebook.** `notebooks/kaggle_tpu_train.ipynb` as a thin
-   driver over the pip-installed package. Confirm `jax.devices()` reports 8 TPU
-   chips and note the image's JAX/Flax versions before the real run.
-
-4. **Create the GitHub remote.** Phase 1 is done, which was the gate.
-
-5. **Phase 3+ — gated on the Windows box.**
-
-Steps 1 and 2 are independent — the corpus prep can stream in the background
-while the Windows toolchain is being sorted out.
+The GPU box (`ssh akpc`) is otherwise fully operational; see the section above and
+`docs/windows_gpu_setup.md`.
 
 ---
 
