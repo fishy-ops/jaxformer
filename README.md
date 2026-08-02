@@ -1,0 +1,197 @@
+# JaxFormer
+
+A from-scratch decoder-only language model with a hand-written CUDA attention kernel,
+built to exercise the full stack a modern LM team touches: a JAX/Flax training pipeline
+designed for TPU data-parallelism, a byte-for-byte PyTorch mirror of the same model, a
+custom fused-attention CUDA kernel for a consumer Turing GPU, and an honest benchmark
+suite tying them together across TPU, GPU, and CPU.
+
+The model doesn't need to write Shakespeare. The point is the engineering: the training
+pipeline, the kernel, and the measurement.
+
+---
+
+## What's here
+
+| Component | Where | Status |
+|---|---|---|
+| Decoder-only transformer (RMSNorm, RoPE, SwiGLU, tied embeddings), ~55M params | `jaxformer/model.py` | done, 13 tests |
+| Data-parallel training (Optax, grad-accum via scan, Orbax ckpt, 8-device sharding) | `jaxformer/{train,sharding}.py` | done, 14 tests |
+| Byte-level BPE + memmapped uint16 token-shard pipeline | `jaxformer/{tokenizer,data}.py` | done, 19 tests |
+| KV-cache autoregressive sampling | `jaxformer/sample.py` | done, 16 tests |
+| PyTorch mirror + Flax↔PyTorch numerical parity | `torch_ref/` | done, parity max-abs **1e-6** |
+| **CUDA attention kernel v1** (fp32, tiled, online softmax, causal skip) | `kernels/` | done, correct to **1e-6**, 18 tests |
+| Attention benchmark vs PyTorch SDPA backends | `bench/bench_attention.py` | done |
+| Nsight Compute profiling of the kernel | `bench/profile_*.{py,bat}` | done |
+
+**68 tests** pass on the dev machine; **18 kernel tests** pass on the GPU box.
+
+---
+
+## The kernel: streaming-softmax attention on Turing
+
+The kernel computes causal multi-head attention without ever materializing the T×T
+score matrix. Each thread block streams over key/value tiles keeping a running softmax
+— a row max `m` and denominator `l` — and rescales its output accumulator as the max
+moves:
+
+```
+for each key tile:
+    s      = scale · (q · kᵀ)              # this tile's scores
+    m_new  = max(m, rowmax(s))
+    p      = exp(s − m_new)
+    l      = l · exp(m − m_new) + sum(p)   # rescale old denominator, add new
+    acc    = acc · exp(m − m_new) + p · v  # rescale old output, add new
+    m      = m_new
+out = acc / l
+```
+
+Memory is therefore **O(T) per query row instead of O(T²)** — the entire reason to write
+this rather than `matmul → softmax → matmul`. Causal masking is a *structural skip*:
+key tiles are visited in order, so once a tile starts past the query tile's last row the
+loop breaks, removing ~half the work at long sequence lengths.
+
+### Why write one at all — the Turing constraint set
+
+The target GPU is an **RTX 2070 Super (Turing, sm_75, 8 GB, 448 GB/s)**, and its
+limitations shaped every decision:
+
+- **FlashAttention-2 does not build for Turing** — it requires Ampere (sm_80+). So the
+  framing is not "reimplement FA2"; it's "FA2 doesn't support this GPU, so here is a
+  kernel that does."
+- **PyTorch SDPA's flash backend fails on this GPU** at every sequence length
+  (`No available kernel`) — a measured finding, below, not a footnote.
+- **No bf16 tensor cores on Turing**, so local training is fp16 + loss scaling (the TPU
+  path uses bf16). **No `cp.async`**, and 64 KB shared memory per block — most
+  FlashAttention tutorial code assumes Ampere pipelining and won't compile here.
+
+---
+
+## Benchmark: the custom kernel vs PyTorch's attention paths
+
+RTX 2070 Super, causal, B=4 · H=8 · head_dim=64, CUDA-event timing (median of 100 after
+warmup), validated against the mem-efficient backend before timing. Data:
+`bench/results/attention_AKPC.json`.
+
+| seq | naive | SDPA math | SDPA mem-eff | SDPA flash | **ours v1** |
+|----:|------:|----------:|-------------:|:----------:|------------:|
+| 512  |  1.14 ms |  1.26 ms | **0.34 ms** | ✗ fails | 0.71 ms |
+| 1024 |  4.24 ms |  4.45 ms | **1.03 ms** | ✗ fails | 2.25 ms |
+| 2048 | 15.99 ms | 16.39 ms | **3.69 ms** | ✗ fails | 7.76 ms |
+| 4096 | 63.10 ms | 64.48 ms | **14.14 ms** | ✗ fails | 29.20 ms |
+| **peak mem @4096** | 4.5 GB | 5.1 GB | **210 MB** | — | **210 MB** |
+
+![latency](docs/figures/attn_latency.png)
+![peak memory](docs/figures/attn_memory.png)
+
+Three honest findings:
+
+1. **SDPA's FlashAttention backend fails on Turing at every length** — the headline the
+   whole project is framed around.
+2. **The online-softmax memory win is real and matches production**: ours and SDPA
+   mem-efficient both stay flat at ~210 MB across the sweep, while naive and SDPA-math
+   materialize the T×T scores and balloon to ~5 GB at T=4096.
+3. **Speed is an honest middle**: ours is **~2× faster than naive/SDPA-math** at every
+   length, and **~2.1× slower than the hand-optimized mem-efficient kernel**. That gap
+   is the point of the profiling pass below — and what a v2 would close.
+
+---
+
+## Profiling: why v1 leaves performance on the table
+
+`ncu` (Nsight Compute) on the T=2048 launch — `bench/results/ncu_v1_2048.json`:
+
+| metric | value | reading |
+|---|---:|---|
+| achieved occupancy | **12.3%** | the bottleneck |
+| registers / thread | **164** | the cause: each thread holds q[64] + accumulator[64] in registers |
+| DRAM throughput | **1.5%** | **not** memory-bound — it's latency/occupancy-bound |
+| long-scoreboard stall | 0.43 / issue | exposed load latency the low occupancy can't hide |
+| SM (compute) throughput | 35% | serial per-key softmax + two `__syncthreads` per tile |
+
+The diagnosis is unambiguous and gives v2 a *target* rather than a guess: the per-thread
+register arrays cap occupancy at 12%. **fp16 WMMA tensor cores** (supported on sm_75 via
+`nvcuda::wmma` `m16n16k16`) restructure the QK^T and AV products into warp-level matrix
+ops, collapsing those register arrays and halving shared memory — the planned v2.
+
+---
+
+## Cross-framework parity — why the comparison is allowed to exist
+
+Comparing "JAX on TPU" against "PyTorch on GPU" is meaningless unless it is the *same
+model*. `torch_ref/parity.py` loads one set of weights into both the Flax and PyTorch
+implementations and checks the logits agree — **max abs 1e-6**, well under the 1e-4 bar.
+The loader is strict (a mis-mapped weight raises rather than silently staying at its
+random init), and it handles the conventions that differ: Flax `Linear` kernels are
+`(in, out)` and transpose to torch's `(out, in)`; RMSNorm's parameter is `scale` in Flax
+and `weight` in torch. Without this check every number in the benchmark table would be
+comparing two different networks.
+
+---
+
+## Architecture, and the reasons
+
+| Choice | Reason |
+|---|---|
+| RMSNorm, pre-norm, RoPE, SwiGLU, tied embeddings, no biases | The modern decoder recipe; RoPE lets attention benchmarks extrapolate past the 1024 training context. |
+| Own 32k byte-level BPE (not GPT-2's 50k) | At d_model=512, a 50k vocab puts ~45% of params in the embedding table. 32k also fits `uint16`, halving the corpus on disk to ~2.2 GB — what makes the Kaggle upload practical. |
+| Flax **NNX** over linen | So the PyTorch mirror can be near line-for-line, which is what makes the parity test legible enough to trust. |
+| Gradient accumulation via `jax.lax.scan` | Flat HLO and bounded peak memory versus an unrolled loop. |
+| Sharding developed on **8 simulated CPU devices** | The `jit(in_shardings=…, out_shardings=…)` step is validated on the laptop before any TPU quota is spent; a sharded step is asserted equal to a single-device step. |
+| Kernel head_dim = 64 | The tile width the CUDA kernel is designed around. |
+
+Full parameter budget: 12 layers × (4·512² attention + 3·512·1408 SwiGLU) + 32768×512
+tied embedding = **55,325,184 params**, matching the analytic count exactly.
+
+---
+
+## Running it
+
+```bash
+# Dev machine (CPU/TPU side)
+pip install -e ".[data,dev]"
+pytest -q                              # 68 tests
+
+# Parity (needs the optional torch extra)
+python -m torch_ref.parity             # PASS at max_abs ~1e-6
+
+# Charts from committed benchmark data
+python -m bench.plots
+```
+
+The GPU/kernel side runs on a Windows box with an RTX 2070 Super. Its toolchain is
+non-standard — a hand-assembled CUDA toolkit (the monolithic installer force-bundles a
+driver older than the installed one) and torch pinned to 2.8.0+cu128 — all documented in
+[`docs/windows_gpu_setup.md`](docs/windows_gpu_setup.md).
+
+```bash
+# On the GPU box, with the environment sourced:
+python -m kernels.test_correctness     # 18 tests vs a float64 reference
+python -m bench.bench_attention        # the table above
+```
+
+---
+
+## Honest limitations
+
+- **v1 is correctness-first.** It is ~2× off the production mem-efficient kernel; the
+  Nsight pass shows exactly why (12% occupancy) and the fp16 WMMA v2 that would close it
+  is not yet written.
+- **The headline TPU training run and the local GPU training run are not yet done** — the
+  pipeline, sharding, and parity that make them meaningful are, but the multi-hour runs
+  and the cross-hardware training table remain.
+- Benchmarks are attention-kernel micro-benchmarks; end-to-end training throughput across
+  TPU/GPU/CPU is the next measurement.
+
+---
+
+## Repository layout
+
+```
+jaxformer/     JAX/Flax training pipeline (model, sharding, train, data, tokenizer, sample)
+torch_ref/     PyTorch mirror + Flax↔PyTorch parity
+kernels/       CUDA attention kernel (csrc/*.cu, build.py, correctness tests)
+bench/         attention + profiling harnesses, committed results/, plots
+docs/          windows_gpu_setup.md, figures/
+tests/         68 tests (model, training, data, sampling, parity)
+```
