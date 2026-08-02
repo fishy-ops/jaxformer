@@ -24,6 +24,7 @@ pipeline, the kernel, and the measurement.
 | **CUDA attention kernel v2** (fp16 WMMA tensor cores) | `kernels/` | done, correct to **1e-3**, 22 tests |
 | Attention benchmark vs PyTorch SDPA backends (fp32 + fp16) | `bench/bench_attention.py` | done |
 | Nsight Compute profiling of both kernels | `bench/profile_*.{py,bat}` | done |
+| Cross-hardware training/inference benchmark (CPU + GPU; TPU via notebook) | `bench/bench_training.py` | done |
 
 **68 tests** pass on the dev machine; **40 kernel tests** pass on the GPU box.
 
@@ -153,6 +154,30 @@ comparing two different networks.
 
 ---
 
+## Cross-hardware: the same model on CPU, GPU, and TPU
+
+The same ~55M architecture (parity-verified across frameworks) measured for training
+throughput, single-token inference latency, and peak memory — each target in its native
+precision. `bench/bench_training.py`; the TPU row comes from the identical `run_jax()` on
+a Kaggle TPU host via `notebooks/kaggle_tpu_train.ipynb`.
+
+| target | precision | train tokens/s | infer ms/token | peak mem |
+|---|---|---:|---:|---:|
+| M4 Pro CPU (JAX) | fp32 | 2,358 | 19.3 | 4.2 GB¹ |
+| RTX 2070 Super (PyTorch) | fp16 | **24,650** | 23.6 | 2.1 GB² |
+| TPU v5e-8 (JAX) | bf16 | *run the notebook* | | |
+
+![cross-hardware](docs/figures/training_hardware.png)
+
+Two findings worth stating: the GPU trains **~10× faster** than the CPU, as expected — but
+**inference latency is essentially identical**, because single-token decode is
+latency-bound (kernel launch, batch of 1), so the GPU's parallelism barely helps at serve
+time. Training throughput and serving latency are different problems. (¹ process RSS,
+² CUDA allocator — the two memory columns are measured differently and not directly
+comparable.)
+
+---
+
 ## Architecture, and the reasons
 
 | Choice | Reason |
@@ -204,11 +229,10 @@ python -m bench.bench_attention        # the table above
   say exactly why, with numbers, and name the v3 direction (warp-shuffle softmax + K/V
   reuse). The kernels are correct and profiler-optimized, not state-of-the-art — which is
   the honest state of a hand-written kernel against a vendor-tuned one.
-- **The headline TPU training run and the local GPU training run are not yet done** — the
-  pipeline, sharding, and parity that make them meaningful are, but the multi-hour runs
-  and the cross-hardware training table remain.
-- Benchmarks are attention-kernel micro-benchmarks; end-to-end training throughput across
-  TPU/GPU/CPU is the next measurement.
+- **No long training run to convergence yet.** The cross-hardware throughput/latency
+  numbers are measured, and the TPU row is one notebook run away, but an actual loss curve
+  on the full corpus (upload to Kaggle, ~9 h session) is future work. The pipeline,
+  sharding, checkpointing, and parity that make such a run trustworthy are done and tested.
 
 ---
 
