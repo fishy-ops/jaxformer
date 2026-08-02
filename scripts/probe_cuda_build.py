@@ -1,0 +1,132 @@
+"""Phase 0 gate: can torch.utils.cpp_extension actually build and run a CUDA kernel?
+
+This is the single check the CUDA half of the project hinges on. nvcc, MSVC, and a
+CUDA-enabled torch can all be individually present while this still fails — the usual
+cause on Windows is cpp_extension not locating the MSVC toolchain, since it shells out
+to `cl.exe` and expects the Developer Command Prompt environment.
+
+If this fails, the fallback is CuPy's RawModule (NVRTC, compiles at runtime, no MSVC
+dependency). That costs the "integrated into a real build system as a torch custom op"
+story but keeps the kernel work itself alive. `--cupy` runs the equivalent check for
+that path so both can be assessed in one trip.
+
+    python scripts/probe_cuda_build.py
+    python scripts/probe_cuda_build.py --cupy
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import textwrap
+import time
+
+# A deliberately trivial kernel. The point is the toolchain, not the arithmetic, so
+# anything that fails here is a build problem and never a logic problem.
+CUDA_SRC = textwrap.dedent(
+    """
+    #include <torch/extension.h>
+
+    __global__ void scale_kernel(const float* x, float* y, float a, int n) {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) y[i] = x[i] * a;
+    }
+
+    torch::Tensor scale(torch::Tensor x, double a) {
+        TORCH_CHECK(x.is_cuda(), "x must be on CUDA");
+        auto y = torch::empty_like(x);
+        int n = x.numel();
+        int threads = 256;
+        scale_kernel<<<(n + threads - 1) / threads, threads>>>(
+            x.data_ptr<float>(), y.data_ptr<float>(), (float)a, n);
+        return y;
+    }
+
+    PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+        m.def("scale", &scale, "x * a");
+    }
+    """
+)
+
+NVRTC_SRC = textwrap.dedent(
+    """
+    extern "C" __global__ void scale_kernel(const float* x, float* y, float a, int n) {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) y[i] = x[i] * a;
+    }
+    """
+)
+
+
+def probe_cpp_extension() -> bool:
+    import torch
+    from torch.utils.cpp_extension import load_inline
+
+    print(f"torch {torch.__version__}, cuda {torch.version.cuda}")
+    if not torch.cuda.is_available():
+        print("FAIL: torch.cuda.is_available() is False")
+        return False
+    cc = torch.cuda.get_device_capability(0)
+    print(f"device: {torch.cuda.get_device_name(0)} (sm_{cc[0]}{cc[1]})")
+
+    print("compiling (first run pulls in nvcc + MSVC; can take a few minutes)...")
+    t0 = time.perf_counter()
+    mod = load_inline(
+        name="jaxformer_probe",
+        cpp_sources="",
+        cuda_sources=CUDA_SRC,
+        functions=["scale"],
+        verbose=True,
+    )
+    print(f"compiled in {time.perf_counter() - t0:.1f}s")
+
+    x = torch.arange(1024, dtype=torch.float32, device="cuda")
+    y = mod.scale(x, 3.0)
+    torch.cuda.synchronize()
+    if not torch.allclose(y, x * 3.0):
+        print("FAIL: kernel compiled but produced wrong results")
+        return False
+    print("PASS: cpp_extension built, launched, and returned correct results")
+    return True
+
+
+def probe_cupy() -> bool:
+    import cupy as cp
+
+    print(f"cupy {cp.__version__}")
+    mod = cp.RawModule(code=NVRTC_SRC, backend="nvrtc")
+    kern = mod.get_function("scale_kernel")
+
+    n = 1024
+    x = cp.arange(n, dtype=cp.float32)
+    y = cp.empty_like(x)
+    threads = 256
+    kern(((n + threads - 1) // threads,), (threads,), (x, y, cp.float32(3.0), n))
+    cp.cuda.runtime.deviceSynchronize()
+    if not cp.allclose(y, x * 3.0):
+        print("FAIL: NVRTC kernel produced wrong results")
+        return False
+    print("PASS: CuPy RawModule (NVRTC) works — viable fallback host")
+    return True
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cupy", action="store_true", help="probe the NVRTC fallback instead")
+    args = ap.parse_args()
+
+    try:
+        ok = probe_cupy() if args.cupy else probe_cpp_extension()
+    except Exception as e:
+        print(f"FAIL: {type(e).__name__}: {e}")
+        if not args.cupy:
+            print("\nIf this is an MSVC/cl.exe error, retry from a 'x64 Native Tools "
+                  "Command Prompt for VS 2022', which puts the toolchain on PATH.")
+            print("If it stays broken: pip install cupy-cuda12x && "
+                  "python scripts/probe_cuda_build.py --cupy")
+        return 1
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

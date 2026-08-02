@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 
 from jaxformer.config import DEFAULT_DATA, DEFAULT_MODEL
@@ -102,3 +103,17 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # Hard exit rather than falling off the end of main().
+    #
+    # Streaming a HuggingFace dataset and abandoning the iterator mid-document (which
+    # is exactly what the target-token stop does, twice) leaves the interpreter wedged
+    # at shutdown: measured 0% CPU with the process never exiting, both manifests
+    # already on disk. Every durable output is written by this point, so there is
+    # nothing to lose by skipping teardown.
+    #
+    # This matters because the real run is multi-hour and backgrounded — a job that
+    # never exits never reports completion, and looks indistinguishable from one still
+    # working. Flush explicitly first, since os._exit skips buffer flushing too.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
