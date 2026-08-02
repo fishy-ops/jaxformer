@@ -34,12 +34,19 @@ tokenizers 0.23.1, datasets 5.0.1.
 | 3 — PyTorch mirror + parity | **done**, 8 tests, parity max_abs ~1e-6 |
 | 4 — CUDA kernel v1 (fp32) | **done**, correct vs float64 ref (~1e-6), 18 tests |
 | 6 — Attention benchmark | **done**, `bench/results/attention_AKPC.json` |
+| 6 — Nsight profiling | **done**, `bench/results/ncu_v1_2048.{csv,json}` |
 | 2 — Kaggle TPU run | not started |
 | 3 — Local GPU training | not started |
 | 5 — CUDA kernel v2 (tensor cores) | not started (gated/optional) |
-| 6 — Nsight profiling | not started |
 | 6 — Cross-hardware training bench | not started |
 | 7 — Charts + README | not started |
+
+**Profiling gave v2 a concrete target, not a guess:** v1 sits at 12% occupancy,
+register-limited (164 regs/thread from the per-thread q + accumulator arrays); DRAM at
+1.5% so it's latency/occupancy-bound, not bandwidth; shared-STORE bank conflicts are
+~10x the loads. So v2 = fp16 WMMA tensor cores (collapse the register arrays, halve
+smem) + a padded shared layout (kill the store conflicts). The nearest cheap
+"show-the-delta" win is the padded layout alone.
 
 **68 tests on the Mac** (incl. parity), **18 kernel tests on the box**. The custom
 kernel is ~2x faster than naive/sdpa-math, matches the mem-efficient backend's O(T)
