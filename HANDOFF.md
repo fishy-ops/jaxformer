@@ -1,4 +1,4 @@
-# Handoff — updated 2026-08-02
+# Handoff — updated 2026-08-02 (repo public, near-complete)
 
 Working notes for resuming JaxFormer. Delete this file once the README exists.
 
@@ -21,7 +21,7 @@ tokenizers 0.23.1, datasets 5.0.1.
 
 ---
 
-## State: Phases 0/1/3/4 done + attention benchmark; TPU + v2 + README remain
+## State: near-complete. Only actual training runs (TPU notebook + convergence) remain
 
 | Phase | Status |
 |---|---|
@@ -36,11 +36,18 @@ tokenizers 0.23.1, datasets 5.0.1.
 | 5 — CUDA kernel v2 (fp16 WMMA) | **done**, correct (~1e-3), 22 tests, profiling-driven 3.4x fix |
 | 6 — Attention benchmark (fp32+fp16) | **done**, `bench/results/attention_AKPC*.json` |
 | 6 — Nsight profiling (v1 + v2 before/after) | **done**, `bench/results/ncu_v{1,2}_2048.json` |
-| 7 — README + attention charts | **done** |
-| 2 — Kaggle TPU run | not started |
-| 3 — Local GPU training | not started |
-| 6 — Cross-hardware training bench | not started |
-| 7 — Training charts | not started (gated on the runs) |
+| 7 — README + charts | **done** |
+| 6 — Cross-hardware training bench (CPU+GPU) | **done**, `bench/results/training_*.json` |
+| 2 — Kaggle TPU run | notebook ready (`notebooks/kaggle_tpu_train.ipynb`); user runs it |
+| 3 — Local GPU training to convergence | not started (throughput measured; needs corpus) |
+
+**Repo is public: https://github.com/fishy-ops/jaxformer** (`origin/main`).
+
+Only two things remain, both gated on running actual multi-hour/interactive jobs, not
+on code: (a) run the Kaggle notebook to fill the TPU row of the cross-hardware table;
+(b) prep the real corpus and run a training-to-convergence loss curve. Everything the
+project is *about* — the pipeline, both CUDA kernels, the profiling-driven optimization,
+the parity, the benchmarks — is done, tested, and pushed.
 
 **Profiling gave v2 a concrete target, not a guess:** v1 sits at 12% occupancy,
 register-limited (164 regs/thread from the per-thread q + accumulator arrays); DRAM at
