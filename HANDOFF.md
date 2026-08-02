@@ -26,7 +26,7 @@ tokenizers 0.23.1, datasets 5.0.1.
 | Phase | Status |
 |---|---|
 | 0 — Mac environment | done, verified |
-| 0 — Windows CUDA toolchain | **not started — blocked, see below** |
+| 0 — Windows CUDA toolchain | **done, gate passes** — see `docs/windows_gpu_setup.md` |
 | 1 — JAX model + tests | done, 13 tests |
 | 1 — Sharding + training loop | done, 14 tests |
 | 1 — Tokenizer + data pipeline | done, 19 tests |
@@ -51,43 +51,28 @@ show rather than an empty scaffold. That condition is now met.
 
 ---
 
-## Blocker: the Windows CUDA gate
+## Windows CUDA gate — CLEARED
 
-**This blocks Phases 3, 4, 5, and 6 — roughly half the project.** Nothing in
-Phase 1/2 depends on it, which is why it hasn't stopped progress yet.
+The gate that blocked Phases 3–6 now passes: `scripts/probe_cuda_build.py` compiles
+and runs a `.cu` on the RTX 2070 Super via `cpp_extension` and returns correct
+results. Full recipe and the traps that cost the most time are in
+**`docs/windows_gpu_setup.md`** — read it before touching the box.
 
-**Network is solved.** Tailscale is up; the box is `akpc` (100.109.40.37) and
-SSH is listening on port 22 — `tailscale ping akpc` and `nc -z akpc 22` both
-succeed from the Mac.
+The short version:
 
-**Auth is not.** `ssh akpc` returns `Permission denied (publickey,password,
-keyboard-interactive)`. A keypair now exists at `~/.ssh/id_ed25519` on the Mac;
-its public half still has to be installed on the Windows side. Note that Windows
-OpenSSH sends *admin* accounts to `%ProgramData%\ssh\administrators_authorized_keys`
-(not `~/.ssh/authorized_keys`), and that file needs its ACL restricted to
-`Administrators` and `SYSTEM` or sshd silently ignores it. Also unconfirmed: the
-Windows username — `rishishanigaram` was a guess and may be wrong.
-
-Fallback if SSH stays broken: git round-trip — commit here, `git pull` on
-Windows, run the probe, commit results back. Workable but slow for CUDA iteration.
-
-Once auth works, the toolchain probes are written and ready to run:
-
-```bash
-ssh akpc "powershell -ExecutionPolicy Bypass -File scripts\probe_windows.ps1"
-ssh akpc "python scripts\probe_cuda_build.py"     # the real gate
-```
-
-`probe_windows.ps1` checks nvidia-smi / nvcc / ncu / MSVC-via-vswhere / torch.
-`probe_cuda_build.py` is the one that actually decides the CUDA half: all of
-those can be individually present while `cpp_extension` still fails to drive
-`cl.exe`. If it fails, retry from an *x64 Native Tools Command Prompt for VS
-2022*; if it still fails, `probe_cuda_build.py --cupy` assesses the NVRTC
-fallback, which costs the "registered torch custom op" talking point but keeps
-the kernel work alive.
-
-Missing installs (CUDA Toolkit 12.x, VS 2022 Build Tools, Nsight Compute) are
-large and slow — worth kicking off before a work session rather than during one.
+- **Reach it:** `ssh akpc` (alias in `~/.ssh/config` → `reach@100.109.40.37`, key
+  auth). The account is `reach` (admin); the key lives in
+  `%ProgramData%\ssh\administrators_authorized_keys`. Sessions are elevated.
+- **Run anything:** SSH is non-interactive, so nothing is on PATH. Always
+  `ssh akpc "cmd /c \"call C:\jaxformer\jf_env.bat && C:\jfvenv\Scripts\python.exe <script>\""`.
+  `jf_env.bat` sources vcvars64 + exports `CUDA_HOME=C:\cudahome` + PATH.
+- **CUDA_HOME is hand-assembled** at `C:\cudahome` (12.8.93). The NVIDIA installer
+  is unusable — it force-installs the bundled 572.61 driver over the newer 596.36
+  and aborts. `scripts/assemble_cudahome.ps1` unpacks the installer with 7-Zip and
+  merges the toolkit payloads (no driver).
+- **torch is pinned to 2.8.0+cu128.** 2.11.0 fails: nvcc + MSVC 19.44 choke on
+  `compiled_autograd.h` (`C2872 'std': ambiguous`).
+- Env: venv at `C:\jfvenv`, Python 3.13, ninja 1.13, 7-Zip 26.02, MSVC 14.44.
 
 ---
 
