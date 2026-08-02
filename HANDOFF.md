@@ -33,13 +33,14 @@ tokenizers 0.23.1, datasets 5.0.1.
 | 1 — Sampler (`sample.py`) | done, 16 tests |
 | 3 — PyTorch mirror + parity | **done**, 8 tests, parity max_abs ~1e-6 |
 | 4 — CUDA kernel v1 (fp32) | **done**, correct vs float64 ref (~1e-6), 18 tests |
-| 6 — Attention benchmark | **done**, `bench/results/attention_AKPC.json` |
-| 6 — Nsight profiling | **done**, `bench/results/ncu_v1_2048.{csv,json}` |
+| 5 — CUDA kernel v2 (fp16 WMMA) | **done**, correct (~1e-3), 22 tests, profiling-driven 3.4x fix |
+| 6 — Attention benchmark (fp32+fp16) | **done**, `bench/results/attention_AKPC*.json` |
+| 6 — Nsight profiling (v1 + v2 before/after) | **done**, `bench/results/ncu_v{1,2}_2048.json` |
+| 7 — README + attention charts | **done** |
 | 2 — Kaggle TPU run | not started |
 | 3 — Local GPU training | not started |
-| 5 — CUDA kernel v2 (tensor cores) | not started (gated/optional) |
 | 6 — Cross-hardware training bench | not started |
-| 7 — Charts + README | not started |
+| 7 — Training charts | not started (gated on the runs) |
 
 **Profiling gave v2 a concrete target, not a guess:** v1 sits at 12% occupancy,
 register-limited (164 regs/thread from the per-thread q + accumulator arrays); DRAM at
