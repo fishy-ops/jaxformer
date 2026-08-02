@@ -21,7 +21,7 @@ tokenizers 0.23.1, datasets 5.0.1.
 
 ---
 
-## State: Phase 1 done, Phase 2+ not started
+## State: Phases 0/1/3/4 done + attention benchmark; TPU + v2 + README remain
 
 | Phase | Status |
 |---|---|
@@ -31,11 +31,23 @@ tokenizers 0.23.1, datasets 5.0.1.
 | 1 — Sharding + training loop | done, 14 tests |
 | 1 — Tokenizer + data pipeline | done, 19 tests |
 | 1 — Sampler (`sample.py`) | done, 16 tests |
-| 2–7 | not started |
+| 3 — PyTorch mirror + parity | **done**, 8 tests, parity max_abs ~1e-6 |
+| 4 — CUDA kernel v1 (fp32) | **done**, correct vs float64 ref (~1e-6), 18 tests |
+| 6 — Attention benchmark | **done**, `bench/results/attention_AKPC.json` |
+| 2 — Kaggle TPU run | not started |
+| 3 — Local GPU training | not started |
+| 5 — CUDA kernel v2 (tensor cores) | not started (gated/optional) |
+| 6 — Nsight profiling | not started |
+| 6 — Cross-hardware training bench | not started |
+| 7 — Charts + README | not started |
 
-**Phase 1 is complete.** 62 tests, ~19s. Five commits on `main`. No GitHub remote
-yet — deliberate, the plan creates the repo once there's a working pipeline to
-show rather than an empty scaffold. That condition is now met.
+**68 tests on the Mac** (incl. parity), **18 kernel tests on the box**. The custom
+kernel is ~2x faster than naive/sdpa-math, matches the mem-efficient backend's O(T)
+memory, and is ~2.1x slower than that production kernel — the gap v2 (tensor cores,
+vectorized loads) would close. SDPA's flash backend fails on Turing (headline).
+
+No GitHub remote yet — still deliberate, but the pipeline is well past "worth
+showing" now, so creating it is a near-term step.
 
 ### What's actually verified
 
