@@ -21,10 +21,11 @@ pipeline, the kernel, and the measurement.
 | KV-cache autoregressive sampling | `jaxformer/sample.py` | done, 16 tests |
 | PyTorch mirror + Flax↔PyTorch numerical parity | `torch_ref/` | done, parity max-abs **1e-6** |
 | **CUDA attention kernel v1** (fp32, tiled, online softmax, causal skip) | `kernels/` | done, correct to **1e-6**, 18 tests |
-| Attention benchmark vs PyTorch SDPA backends | `bench/bench_attention.py` | done |
-| Nsight Compute profiling of the kernel | `bench/profile_*.{py,bat}` | done |
+| **CUDA attention kernel v2** (fp16 WMMA tensor cores) | `kernels/` | done, correct to **1e-3**, 22 tests |
+| Attention benchmark vs PyTorch SDPA backends (fp32 + fp16) | `bench/bench_attention.py` | done |
+| Nsight Compute profiling of both kernels | `bench/profile_*.{py,bat}` | done |
 
-**68 tests** pass on the dev machine; **18 kernel tests** pass on the GPU box.
+**68 tests** pass on the dev machine; **40 kernel tests** pass on the GPU box.
 
 ---
 
@@ -81,8 +82,8 @@ warmup), validated against the mem-efficient backend before timing. Data:
 | 4096 | 63.10 ms | 64.48 ms | **14.14 ms** | ✗ fails | 29.20 ms |
 | **peak mem @4096** | 4.5 GB | 5.1 GB | **210 MB** | — | **210 MB** |
 
-![latency](docs/figures/attn_latency.png)
-![peak memory](docs/figures/attn_memory.png)
+![latency](docs/figures/attn_latency_fp32.png)
+![peak memory](docs/figures/attn_memory_fp32.png)
 
 Three honest findings:
 
@@ -97,22 +98,45 @@ Three honest findings:
 
 ---
 
-## Profiling: why v1 leaves performance on the table
+## Profiling drove every optimization — with measured deltas
 
-`ncu` (Nsight Compute) on the T=2048 launch — `bench/results/ncu_v1_2048.json`:
+This is the part that separates the kernel from a blog-post reimplementation: every
+change was chosen from an `ncu` (Nsight Compute) profile, and every change is backed by a
+before/after number.
+
+**v1's profile** (`bench/results/ncu_v1_2048.json`) said it was occupancy-bound:
 
 | metric | value | reading |
 |---|---:|---|
 | achieved occupancy | **12.3%** | the bottleneck |
 | registers / thread | **164** | the cause: each thread holds q[64] + accumulator[64] in registers |
-| DRAM throughput | **1.5%** | **not** memory-bound — it's latency/occupancy-bound |
-| long-scoreboard stall | 0.43 / issue | exposed load latency the low occupancy can't hide |
-| SM (compute) throughput | 35% | serial per-key softmax + two `__syncthreads` per tile |
+| DRAM throughput | **1.5%** | **not** memory-bound — latency/occupancy-bound |
 
-The diagnosis is unambiguous and gives v2 a *target* rather than a guess: the per-thread
-register arrays cap occupancy at 12%. **fp16 WMMA tensor cores** (supported on sm_75 via
-`nvcuda::wmma` `m16n16k16`) restructure the QK^T and AV products into warp-level matrix
-ops, collapsing those register arrays and halving shared memory — the planned v2.
+So **v2** moved the accumulators into `nvcuda::wmma` tensor-core fragments (sm_75
+`m16n16k16`) and loaded Q/K/V straight from global. That did exactly what the profile
+predicted — **registers/thread 164 → 64, occupancy 12% → 27%** — but the first version was
+*slower than v1*, and its profile said why: **552M shared-memory bank conflicts** and
+tensor cores **0.6% utilized**. The root cause was exact: the softmax's output
+accumulator `Os[row*64 + d]` has row stride 64 ≡ 0 (mod 32), so all 16 active rows collide
+on one bank — a 16-way conflict.
+
+**The fix is one line — pad the row stride to 65 — and the delta is measured**
+(`bench/results/ncu_v2_2048.json`):
+
+| metric | v2 naïve | v2 padded | change |
+|---|---:|---:|---:|
+| shared store bank conflicts | 552M | 46M | **12× fewer** |
+| shared load bank conflicts | 656M | 148M | 4.4× fewer |
+| SM throughput | 8.2% | 27.9% | 3.4× |
+| kernel time (T=2048) | 45.3 ms | 13.3 ms | **3.4× faster** |
+
+**The honest outcome:** v2 is 3.4× faster than the naïve tensor-core version, but it still
+does *not* beat the tuned SIMT v1 or the production mem-efficient kernel. Even after the
+fix, tensor-core utilization is only ~2% — the serial per-row online-softmax between the
+two matmuls (16 of 32 lanes, scalar shared reductions) now dominates. **Tensor cores
+accelerate the matmuls, but attention is not only matmuls**; closing the remaining gap
+needs warp-shuffle softmax reductions and K/V reuse across the key loop (a v3). That
+lesson — and the profiler evidence for it — is the point, more than a leaderboard number.
 
 ---
 
@@ -166,7 +190,7 @@ driver older than the installed one) and torch pinned to 2.8.0+cu128 — all doc
 
 ```bash
 # On the GPU box, with the environment sourced:
-python -m kernels.test_correctness     # 18 tests vs a float64 reference
+python -m kernels.test_correctness     # 40 tests (v1 + v2) vs a float64 reference
 python -m bench.bench_attention        # the table above
 ```
 
@@ -174,9 +198,12 @@ python -m bench.bench_attention        # the table above
 
 ## Honest limitations
 
-- **v1 is correctness-first.** It is ~2× off the production mem-efficient kernel; the
-  Nsight pass shows exactly why (12% occupancy) and the fp16 WMMA v2 that would close it
-  is not yet written.
+- **Neither custom kernel beats the production mem-efficient backend.** v1 (fp32) is ~2×
+  behind it; v2 (fp16 tensor cores) is behind v1 because the per-row softmax glue between
+  the matmuls dominates once the matmuls are on tensor cores. The profiling sections above
+  say exactly why, with numbers, and name the v3 direction (warp-shuffle softmax + K/V
+  reuse). The kernels are correct and profiler-optimized, not state-of-the-art — which is
+  the honest state of a hand-written kernel against a vendor-tuned one.
 - **The headline TPU training run and the local GPU training run are not yet done** — the
   pipeline, sharding, and parity that make them meaningful are, but the multi-hour runs
   and the cross-hardware training table remain.
@@ -190,7 +217,7 @@ python -m bench.bench_attention        # the table above
 ```
 jaxformer/     JAX/Flax training pipeline (model, sharding, train, data, tokenizer, sample)
 torch_ref/     PyTorch mirror + Flax↔PyTorch parity
-kernels/       CUDA attention kernel (csrc/*.cu, build.py, correctness tests)
+kernels/       CUDA attention kernels v1 (fp32) + v2 (fp16 WMMA), build.py, correctness tests
 bench/         attention + profiling harnesses, committed results/, plots
 docs/          windows_gpu_setup.md, figures/
 tests/         68 tests (model, training, data, sampling, parity)
