@@ -11,7 +11,7 @@ Full plan: `~/.claude/plans/project-jaxformer-a-polymorphic-whale.md`
 ```bash
 cd ~/Developer/jaxformer
 conda activate jaxformer          # python 3.11, package installed editable
-pytest -q                         # 46 tests, ~14s, all should pass
+pytest -q                         # 62 tests, ~19s, all should pass
 ```
 
 If `import jaxformer` fails: `pip install -e ".[data,dev]"`.
@@ -21,7 +21,7 @@ tokenizers 0.23.1, datasets 5.0.1.
 
 ---
 
-## State: Phase 1 essentially done, Phase 2+ not started
+## State: Phase 1 done, Phase 2+ not started
 
 | Phase | Status |
 |---|---|
