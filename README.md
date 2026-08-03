@@ -180,17 +180,36 @@ comparable.)
 
 ## Does it learn?
 
-A short run of the real 55M model on the real fineweb-edu shards — 250 steps, CPU,
-`python -m scripts.train_smoke` — to show the pipeline actually descends rather than
-just passing unit tests:
+Two real runs on the real fineweb-edu shards — a CPU smoke (`scripts/train_smoke.py`,
+JAX, ~1M tokens) and a full local GPU run (`torch_ref/train_loop.py`, RTX 2070 Super,
+fp32, **15,000 steps / ~61M tokens / 68 min at 15k tok/s**). Plotted against tokens seen:
 
-![loss curve](docs/figures/train_smoke_loss.png)
+![loss curve](docs/figures/train_loss.png)
 
-Train loss falls from **9.45 → 6.55** and val loss from **7.45 → 6.68**, cleanly away
-from the `ln(vocab) ≈ 10.4` uniform-init reference, with healthy gradient norms and the
-warmup→cosine schedule behaving. This is ~1M tokens; the 3.2–3.6 nat target needs the
-full 1.1B-token run (that's the Kaggle job), but the descent is real and monotonic — the
-data pipeline, tokenizer, loss, optimizer, and schedule all work end to end on real text.
+Both descend along the same trajectory from the `ln(vocab) ≈ 10.4` random-init line — a
+nice consistency check that the two independent framework paths learn the same way — and
+the GPU run pushes 60× deeper, from **8.6 → val 4.5**. Grad norms stay ~1, the
+warmup→cosine schedule behaves, and the run is checkpointed/resumable.
+
+What 4.5 nats looks like — samples from the step-15000 checkpoint
+(`scripts/gen_sample.py`, `docs/sample_generations.txt`):
+
+> **The history of** the land is a very important part of the modern world. The history
+> of the land is very different from that of the land of the land of England …
+
+> **Scientists have discovered** which makes the discovery possible. It's clear that the
+> discovery of a new gene is far from being done. So how do scientists … study the DNA …
+
+Fluent, grammatical, topically-relevant English in the fineweb-edu web register — with
+the repetition typical of a small, undertrained model. Coherent long-range meaning needs
+the 3.2–3.6 nat range, i.e. the full 1.1B-token run (the Kaggle TPU job). But the model
+demonstrably learns real language end to end.
+
+Two bugs surfaced *only* by running real training, not by the 68 unit tests — a useful
+reminder that tests and a training run check different things:
+a fresh PyTorch model used the wrong (kaiming, not GPT-0.02) weight init, giving a
+~200-nat start; and the tied-embedding logits overflowed fp16. Both fixed, the first with
+a regression test.
 
 ---
 
@@ -245,11 +264,15 @@ python -m bench.bench_attention        # the table above
   say exactly why, with numbers, and name the v3 direction (warp-shuffle softmax + K/V
   reuse). The kernels are correct and profiler-optimized, not state-of-the-art — which is
   the honest state of a hand-written kernel against a vendor-tuned one.
-- **No *full* training run to convergence yet.** A short run shows the loss descends
-  cleanly on real data (above), and the cross-hardware throughput/latency numbers are
-  measured, but training to the 3.2–3.6 nat target on the full 1.1B-token corpus (upload
-  to Kaggle, ~9 h session) is future work. The corpus is prepared; the pipeline, sharding,
-  checkpointing, and parity that make such a run trustworthy are done and tested.
+- **No run to the 3.2–3.6 nat target yet.** The model is trained to val loss ~4.5 on ~61M
+  tokens (above) — clearly learning, but undertrained relative to its 1.1B-token
+  Chinchilla point. The full run (upload the prepared corpus to Kaggle, ~9 h TPU session)
+  is future work; the pipeline, sharding, checkpointing, and parity that make it
+  trustworthy are done and tested, and the corpus is prepared.
+- **The local GPU run is fp32/seq-256, not fp16.** The parity model uses naive O(T²)
+  attention, which is memory-heavy at seq 512 on 8 GB and fp16-unstable there; fp32/seq-256
+  trains stably at 15k tok/s. Swapping the custom fused kernel in for training (not just
+  benchmarking) is the natural bridge between the two halves of this project.
 
 ---
 

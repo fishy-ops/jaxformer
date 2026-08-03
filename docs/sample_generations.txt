@@ -1,0 +1,27 @@
+Samples from the ~55M model after the local GPU run (RTX 2070 Super, step 15000,
+val loss ~4.5, ~61M tokens of fineweb-edu). Greedy-ish sampling, temperature 0.7,
+top-k 40. Reproduce with:
+
+  python -m scripts.gen_sample --ckpt ckpt_15000.pt --tokenizer tokenizer.json
+
+At this compute budget the output is fluent, grammatical, topically-relevant English in
+the fineweb-edu web register -- with the repetition typical of a small, undertrained
+model. Coherent long-range meaning needs the full 1.1B-token run.
+
+--- prompt: "The history of"
+The history of the land is a very important part of the modern world. The history of
+the land is very different from that of the land of the land of England, but this is
+not a good. The history of the land of England, which is very much
+
+--- prompt: "Scientists have discovered"
+Scientists have discovered which makes the discovery possible.
+It's clear that the discovery of a new gene is far from being done.
+So how do scientists, scientists, scientists and scientists study the DNA of the DNA
+from a single cell to a single cell?
+
+--- prompt: "In order to learn"
+In order to learn more about the different types of health care programs, please visit
+the website of The Health Care Education Center, the link below.
+For more information about the health care programs and services in the department of
+health care, visit the website:
+- American

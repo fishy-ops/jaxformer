@@ -141,32 +141,43 @@ def render_training():
 
 
 def render_loss_curve():
-    """Train/val loss from the short real-data run: does the model actually learn?"""
-    path = os.path.join(HERE, "results", "train_smoke_loss.json")
-    if not os.path.exists(path):
+    """Train/val loss from the real-data runs, vs tokens seen: does the model learn,
+    and does more compute help? Overlays every train_*_loss.json on a shared token axis."""
+    runs = []
+    for name, color in [("train_smoke_loss.json", "#1565c0"), ("train_gpu_loss.json", "#6a1b9a")]:
+        p = os.path.join(HERE, "results", name)
+        if os.path.exists(p):
+            runs.append((json.load(open(p)), color))
+    if not runs:
         return
-    d = json.load(open(path))
-    tr = d["train_log"]
-    fig, ax = plt.subplots(figsize=(7, 4.4))
-    ax.plot([l["step"] for l in tr], [l["loss"] for l in tr],
-            color="#1565c0", marker="o", markersize=3, linewidth=1.5, label="train loss")
-    if d.get("val_log"):
-        vl = d["val_log"]
-        ax.plot([v["step"] for v in vl], [v["val_loss"] for v in vl],
-                color="#2e7d32", marker="D", markersize=6, linewidth=2, label="val loss")
-    ln_vocab = d.get("init_loss_reference_ln_vocab")
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    ln_vocab = None
+    for d, color in runs:
+        cfg = d.get("config", {})
+        tok = cfg.get("batch", 1) * cfg.get("seq", 1)
+        dev = d.get("device", "").split("(")[0].strip() or d.get("device", "")
+        label = f"{dev} ({d.get('dtype','')}, {cfg.get('seq')} ctx)"
+        vl = d.get("val_log") or []
+        if vl:
+            ax.plot([v["step"] * tok / 1e6 for v in vl], [v["val_loss"] for v in vl],
+                    color=color, marker="D", markersize=5, linewidth=2, label=f"{label} — val")
+        tr = d.get("train_log") or []
+        ax.plot([l["step"] * tok / 1e6 for l in tr], [l["loss"] for l in tr],
+                color=color, alpha=0.35, linewidth=1, label=f"{label} — train")
+        ln_vocab = d.get("init_loss_reference_ln_vocab", ln_vocab)
     if ln_vocab:
         ax.axhline(ln_vocab, color="#9e9e9e", ls="--", lw=1,
-                   label=f"uniform init ≈ ln(vocab) = {ln_vocab:.1f}")
-    cfg = d.get("config", {})
-    ax.set_xlabel("step")
+                   label=f"random init ≈ ln(vocab) = {ln_vocab:.1f}")
+
+    ax.set_xlabel("tokens seen (millions)")
     ax.set_ylabel("cross-entropy loss (nats)")
-    ax.set_title(f"{d.get('model','model')} on real fineweb-edu, {d.get('device','')} "
-                 f"({cfg.get('steps')} steps, batch {cfg.get('batch')}, seq {cfg.get('seq')})")
-    ax.grid(True, ls=":", alpha=0.4)
-    ax.legend(fontsize=9)
+    ax.set_xscale("log")
+    ax.set_title("Training the ~55M model on real fineweb-edu (more compute → lower loss)")
+    ax.grid(True, which="both", ls=":", alpha=0.4)
+    ax.legend(fontsize=8)
     fig.tight_layout()
-    out = os.path.join(FIG_DIR, "train_smoke_loss.png")
+    out = os.path.join(FIG_DIR, "train_loss.png")
     fig.savefig(out, dpi=140)
     plt.close(fig)
     print(f"wrote {out}")
